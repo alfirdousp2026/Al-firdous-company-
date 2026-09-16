@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes, viewport-fit=cover" />
 <title>الفردوس للنقل والتوريد</title>
 
 <!-- ===== إعدادات تطبيق الهاتف (PWA) ===== -->
@@ -364,6 +364,12 @@
     <div class="sidebar-foot">
       <div id="sidebarUserBox" style="margin-bottom:6px;"></div>
       <button class="dark-toggle-btn" onclick="toggleDarkMode()" id="darkToggleBtn">🌙 الوضع الليلي</button>
+      <div class="dark-toggle-btn" style="display:flex; gap:6px; align-items:center; justify-content:center;">
+        <span>حجم الخط:</span>
+        <button class="icon-btn" onclick="adjustZoom(-1)" title="تصغير">➖</button>
+        <button class="icon-btn" onclick="adjustZoom(0)" title="الحجم الافتراضي">↺</button>
+        <button class="icon-btn" onclick="adjustZoom(1)" title="تكبير">➕</button>
+      </div>
       <div>إدارة: أ. أحمد رجب</div>
       <div>محاسب: إيهاب محمد</div>
       <div class="save-indicator" id="saveIndicator"></div>
@@ -375,6 +381,8 @@
       <span>الفردوس للنقل والتوريد</span>
       <span style="display:flex; align-items:center; gap:8px;">
         <button class="mobile-icon-btn" onclick="openGlobalSearch()">🔍</button>
+        <button class="mobile-icon-btn" onclick="adjustZoom(-1)" title="تصغير الخط">🔎➖</button>
+        <button class="mobile-icon-btn" onclick="adjustZoom(1)" title="تكبير الخط">🔎➕</button>
         <button class="mobile-icon-btn" id="mobileNavManageBtn" onclick="toggleNavEditMode()" title="تخصيص القائمة (إظهار/إخفاء أقسام)">🛠️</button>
         <span class="save-tag" id="saveIndicatorMobile"></span>
         <span id="mobileUserBox"></span>
@@ -830,6 +838,28 @@ function toggleDarkMode(){
   const on = !document.documentElement.classList.contains("dark");
   localStorage.setItem(DARK_MODE_KEY, on?"1":"0");
   applyDarkModePreference();
+}
+/* ======================================================================
+   تكبير/تصغير حجم الواجهة (مفيد خصوصًا على الموبايل) — يستخدم خاصية
+   zoom في CSS (مدعومة في كل متصفحات كروم/الأندرويد اللي التطبيق موجّه
+   لها أساسًا)، ومحفوظة على الجهاز فتفضل ثابتة بين الجلسات
+   ====================================================================== */
+const ZOOM_KEY = "ferdaws-zoom-level-v1";
+const ZOOM_STEPS = [0.75, 0.85, 1.0, 1.15, 1.3, 1.45, 1.6];
+function applyZoomPreference(){
+  let level = parseFloat(localStorage.getItem(ZOOM_KEY));
+  if(!level || ZOOM_STEPS.indexOf(level)===-1) level = 1.0;
+  document.body.style.zoom = level;
+}
+/* dir=-1 تصغير خطوة، dir=1 تكبير خطوة، dir=0 رجوع للحجم الافتراضي */
+function adjustZoom(dir){
+  let level = parseFloat(localStorage.getItem(ZOOM_KEY)) || 1.0;
+  let idx = ZOOM_STEPS.indexOf(level);
+  if(idx===-1) idx = ZOOM_STEPS.indexOf(1.0);
+  if(dir===0){ idx = ZOOM_STEPS.indexOf(1.0); }
+  else{ idx = Math.max(0, Math.min(ZOOM_STEPS.length-1, idx+dir)); }
+  localStorage.setItem(ZOOM_KEY, String(ZOOM_STEPS[idx]));
+  applyZoomPreference();
 }
 let authMode = "login";
 let forgotPwState = { step:1, user:null };
@@ -2103,6 +2133,7 @@ function sourceLabel(type){
 /* ======================================================================
    العرض الرئيسي (Router)
    ====================================================================== */
+let lastRenderedTab = null;
 function render(){
   renderSidebar();
   renderBottomNav();
@@ -2111,7 +2142,13 @@ function render(){
   renderPendingQRCodes();
   renderPendingCharts();
   if(ui.tab==="sync") fetchConnectedDevices();
-  window.scrollTo(0,0);
+  /* التمرير لأعلى الصفحة بس لما تتغيّر الصفحة (تبويب جديد) — أما أي
+     إجراء بيحصل داخل نفس الصفحة (حذف، تعديل، إضافة...) فيحافظ على
+     موضع التمرير الحالي بدل ما يرجّعك لأول الصفحة كل مرة */
+  if(ui.tab !== lastRenderedTab){
+    window.scrollTo(0,0);
+    lastRenderedTab = ui.tab;
+  }
 }
 function renderSidebar(){
   const editing = !!ui.navEditMode;
@@ -2479,8 +2516,7 @@ function accountsById(){
   const map = {}; DB.accounts.forEach(a=>map[a.id]=a); return map;
 }
 function renderJournal(isAdjustment){
-  let list = DB.entries.filter(e => !!e.isAdjustment===isAdjustment)
-    .slice().sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0);
+  let list = DB.entries.filter(e => !!e.isAdjustment===isAdjustment);
   const accMap = accountsById();
 
   let html = sectionHead(
@@ -2495,13 +2531,39 @@ function renderJournal(isAdjustment){
   html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
     '<div style="width:150px;"><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(ui.journalFilterFrom||"")+'" onchange="ui.journalFilterFrom=this.value; render();"/></div>' +
     '<div style="width:150px;"><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(ui.journalFilterTo||"")+'" onchange="ui.journalFilterTo=this.value; render();"/></div>' +
-    ((ui.journalFilterFrom||ui.journalFilterTo) ? '<button class="btn btn-ghost btn-sm" onclick="ui.journalFilterFrom=\'\'; ui.journalFilterTo=\'\'; render();">✕ مسح الفلتر</button>' : '') +
+    '<div style="width:150px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(ui.journalFilterMonth||"")+'" onchange="ui.journalFilterMonth=this.value; render();"/></div>' +
+    '<div style="width:200px;"><label class="f-label">🔍 بحث برقم القيد أو البيان</label><input class="f-input" placeholder="مثال: 105 أو اسم العميل" value="'+esc(ui.journalSearch||"")+'" oninput="ui.journalSearch=this.value; render();"/></div>' +
+    '<div style="width:170px;"><label class="f-label">الترتيب</label><select class="f-input" onchange="ui.journalSort=this.value; render();">' +
+      '<option value="date_desc" '+((ui.journalSort||"date_desc")==="date_desc"?"selected":"")+'>الأحدث أولًا</option>' +
+      '<option value="date_asc" '+(ui.journalSort==="date_asc"?"selected":"")+'>الأقدم أولًا</option>' +
+      '<option value="number_desc" '+(ui.journalSort==="number_desc"?"selected":"")+'>رقم القيد (تنازلي)</option>' +
+      '<option value="number_asc" '+(ui.journalSort==="number_asc"?"selected":"")+'>رقم القيد (تصاعدي)</option>' +
+      '<option value="amount_desc" '+(ui.journalSort==="amount_desc"?"selected":"")+'>المبلغ (الأعلى أولًا)</option>' +
+      '<option value="amount_asc" '+(ui.journalSort==="amount_asc"?"selected":"")+'>المبلغ (الأقل أولًا)</option>' +
+    '</select></div>' +
+    ((ui.journalFilterFrom||ui.journalFilterTo||ui.journalFilterMonth||ui.journalSearch) ? '<button class="btn btn-ghost btn-sm" onclick="ui.journalFilterFrom=\'\'; ui.journalFilterTo=\'\'; ui.journalFilterMonth=\'\'; ui.journalSearch=\'\'; render();">✕ مسح الفلاتر</button>' : '') +
   '</div>';
   if(ui.journalFilterFrom) list = list.filter(e=>e.date>=ui.journalFilterFrom);
   if(ui.journalFilterTo) list = list.filter(e=>e.date<=ui.journalFilterTo);
+  if(ui.journalFilterMonth) list = list.filter(e=>(e.date||"").slice(0,7)===ui.journalFilterMonth);
+  if(ui.journalSearch && ui.journalSearch.trim()){
+    const term = ui.journalSearch.trim().toLowerCase();
+    list = list.filter(e=>
+      String(e.entryNumber||"").toLowerCase().indexOf(term)!==-1 ||
+      String(e.description||"").toLowerCase().indexOf(term)!==-1
+    );
+  }
+  const sortMode = ui.journalSort || "date_desc";
+  const entryTotal = e => e.lines.reduce((s,l)=>s+(Number(l.debit)||0),0);
+  if(sortMode==="date_asc") list = list.slice().sort((a,b)=> a.date<b.date?-1:a.date>b.date?1:0);
+  else if(sortMode==="number_desc") list = list.slice().sort((a,b)=> (Number(b.entryNumber)||0)-(Number(a.entryNumber)||0));
+  else if(sortMode==="number_asc") list = list.slice().sort((a,b)=> (Number(a.entryNumber)||0)-(Number(b.entryNumber)||0));
+  else if(sortMode==="amount_desc") list = list.slice().sort((a,b)=> entryTotal(b)-entryTotal(a));
+  else if(sortMode==="amount_asc") list = list.slice().sort((a,b)=> entryTotal(a)-entryTotal(b));
+  else list = list.slice().sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:0); // date_desc (افتراضي)
 
   if(list.length===0){
-    html += '<div class="empty-row">'+(isAdjustment?"لا توجد تسويات جردية بعد":"لا توجد قيود يومية بعد")+'</div>';
+    html += '<div class="empty-row">'+(isAdjustment?"لا توجد تسويات جردية مطابقة":"لا توجد قيود يومية مطابقة")+'</div>';
   }
   list.forEach(e => {
     const total = e.lines.reduce((s,l)=>s+(Number(l.debit)||0),0);
@@ -3424,9 +3486,9 @@ function partyTableHtml(kind){
   else list = list.slice().sort((a,b)=> (Number(a.sortOrder)||0)-(Number(b.sortOrder)||0));
 
   const isCustom = sortMode==="custom";
-  let html = '<div class="table-wrap"><table><thead><tr>'+(isCustom?'<th style="width:56px;">ترتيب</th>':'')+'<th>الاسم</th><th>الهاتف</th><th>العنوان</th><th class="tleft">الرصيد المستحق</th><th>الربط</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+  let html = '<div class="table-wrap"><table><thead><tr>'+(isCustom?'<th style="width:56px;">ترتيب</th>':'')+'<th style="width:40px;">#</th><th>الاسم</th><th>الهاتف</th><th>العنوان</th><th class="tleft">الرصيد المستحق</th><th>الربط</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
   if(list.length===0){
-    html += '<tr><td colspan="'+(isCustom?7:6)+'"><div class="empty-row">لا توجد بيانات مطابقة</div></td></tr>';
+    html += '<tr><td colspan="'+(isCustom?8:7)+'"><div class="empty-row">لا توجد بيانات مطابقة</div></td></tr>';
   }
   list.forEach((p,i)=>{
     const bal = partyBalance(kind, p.id);
@@ -3443,6 +3505,7 @@ function partyTableHtml(kind){
     }
     html += '<tr style="'+(hidden?"opacity:.55;":"")+'">' +
       (isCustom ? '<td class="tleft"><button class="icon-btn" style="padding:2px 6px;" '+(i===0?"disabled":"")+' onclick="movePartyOrder(\''+kind+'\',\''+p.id+'\',-1)" title="تحريك لأعلى">▲</button><button class="icon-btn" style="padding:2px 6px;" '+(i===list.length-1?"disabled":"")+' onclick="movePartyOrder(\''+kind+'\',\''+p.id+'\',1)" title="تحريك لأسفل">▼</button></td>' : '') +
+      '<td class="num" style="color:var(--stone-400);">'+(i+1)+'</td>' +
       '<td style="font-weight:600;">'+esc(p.name)+(hidden?' <span style="font-size:10px; color:var(--stone-400);">(مخفي من التقارير)</span>':'')+'</td>' +
       '<td>'+esc(p.phone||"—")+'</td><td>'+esc(p.address||"—")+'</td>' +
       '<td class="tleft num" style="font-weight:700; color:'+(bal>0?"#e11d48":"#059669")+';">'+money(bal)+creditHtml+'</td>' +
@@ -3718,13 +3781,13 @@ function renderRegister(kind){
 
   const opTypeLabels = {transport:"🚚 نقل", supply:"📦 توريد"};
   const cogsCols = isSales ? '<th class="tleft">تكلفة البضاعة</th><th class="tleft">إجمالي الربح</th>' : '';
-  const colCount = isSales ? 14 : 12;
-  html += '<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>'+(isSales?"العميل":"المورد")+'</th><th>'+crossLabel+'</th><th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th><th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>'+cogsCols+'<th class="tleft">إجراءات</th></tr></thead><tbody>';
+  const colCount = (isSales ? 14 : 12) + 1;
+  html += '<div class="table-wrap"><table><thead><tr><th style="width:40px;">#</th><th>التاريخ</th><th>'+(isSales?"العميل":"المورد")+'</th><th>'+crossLabel+'</th><th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th><th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>'+cogsCols+'<th class="tleft">إجراءات</th></tr></thead><tbody>';
   if(list.length===0){
     html += '<tr><td colspan="'+colCount+'"><div class="empty-row">لا توجد عمليات مطابقة</div></td></tr>';
   }
   let totalAmount=0, totalPaid=0, totalCogs=0;
-  list.forEach(r=>{
+  list.forEach((r,rowIdx)=>{
     const party = parties.find(p=>p.id===r[partyField]);
     const crossParty = r.crossPartyId ? crossParties.find(p=>p.id===r.crossPartyId) : null;
     const remain = Number(r.amount)-Number(r.paid||0);
@@ -3740,7 +3803,7 @@ function renderRegister(kind){
       cogsCells = '<td class="tleft num">'+(r.inventoryAccountId ? money(cogs) : "—")+shortfallWarn+'</td>' +
         '<td class="tleft num" style="color:'+(grossProfit>=0?"#059669":"#e11d48")+';">'+(r.inventoryAccountId ? money(grossProfit) : "—")+'</td>';
     }
-    html += '<tr><td style="white-space:nowrap;">'+fmtDate(r.date)+'</td>' +
+    html += '<tr><td class="num" style="color:var(--stone-400);">'+(rowIdx+1)+'</td><td style="white-space:nowrap;">'+fmtDate(r.date)+'</td>' +
       '<td>'+esc(party?party.name:"—")+'</td>' +
       '<td>'+(crossParty ? esc(crossParty.name) : '<span style="color:var(--stone-400);">—</span>')+'</td>' +
       '<td>'+(opTypeLabels[r.operationType] || '<span style="color:var(--stone-400); font-size:11px;">—</span>')+'</td>' +
@@ -4153,11 +4216,43 @@ function renderAnalysis(){
       '<option value="aging" '+(ui.analysisView==="aging"?"selected":"")+'>تأخر مستحقات العملاء</option>' +
       '<option value="monthlyProfit" '+(ui.analysisView==="monthlyProfit"?"selected":"")+'>عدد عمليات النقل وربحية العملاء الشهرية</option>' +
       '<option value="yearlyCompare" '+(ui.analysisView==="yearlyCompare"?"selected":"")+'>مقارنة سنة بسنة (شهريًا)</option>' +
+      '<option value="counts" '+(ui.analysisView==="counts"?"selected":"")+'>📋 إحصائيات الأعداد</option>' +
     '</select></div>';
   if(ui.analysisView==="aging") html += renderAgingAnalysis();
   else if(ui.analysisView==="monthlyProfit") html += renderMonthlyProfitAnalysis();
   else if(ui.analysisView==="yearlyCompare") html += renderYearlyComparison();
+  else if(ui.analysisView==="counts") html += renderCountsAnalysis();
   else html += renderTrendsAnalysis();
+  return html;
+}
+/* عدد كل عنصر مسجَّل في النظام (عملاء، موردين، سائقين، مساعدين، عمليات
+   بيع وشراء) — نظرة سريعة على حجم البيانات المسجّلة إجمالًا */
+function renderCountsAnalysis(){
+  const counts = [
+    {label:"👥 العملاء", value:(DB.customers||[]).length, color:"teal"},
+    {label:"🚚 الموردون", value:(DB.suppliers||[]).length, color:"amber"},
+    {label:"🧑‍✈️ السائقون", value:(DB.drivers||[]).length, color:"slate"},
+    {label:"🧑‍🔧 المساعدون (التبّاعون)", value:(DB.helpers||[]).length, color:"slate"},
+    {label:"📦 عمليات البيع", value:(DB.sales||[]).length, color:"emerald"},
+    {label:"🛒 عمليات الشراء", value:(DB.purchases||[]).length, color:"rose"},
+    {label:"🧾 سندات القبض", value:(DB.receipts||[]).length, color:"teal"},
+    {label:"💳 سندات الصرف", value:(DB.payments||[]).length, color:"amber"},
+    {label:"🚗 المركبات", value:(DB.vehicles||[]).length, color:"slate"},
+    {label:"📓 قيود اليومية", value:(DB.entries||[]).length, color:"emerald"},
+    {label:"🏦 الشيكات", value:(DB.checks||[]).length, color:"rose"},
+    {label:"🌳 حسابات الشجرة", value:(DB.accounts||[]).length, color:"teal"},
+  ];
+  let html = '<div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">';
+  counts.forEach(c=>{ html += card(c.label, String(c.value), "إجمالي المسجَّل بالنظام", c.color); });
+  html += '</div>';
+  const custWithBalance = (DB.customers||[]).filter(p=>Math.abs(partyBalance("customers",p.id))>0.001).length;
+  const supWithBalance = (DB.suppliers||[]).filter(p=>Math.abs(partyBalance("suppliers",p.id))>0.001).length;
+  html += '<div class="group-title"><span class="dot dot-teal"></span>تفصيل إضافي</div>';
+  html += '<div class="table-wrap"><table><thead><tr><th>البند</th><th class="tleft">العدد</th></tr></thead><tbody>' +
+    '<tr><td>عملاء لهم رصيد مستحق (غير صفري)</td><td class="tleft num">'+custWithBalance+' من '+(DB.customers||[]).length+'</td></tr>' +
+    '<tr><td>موردون لهم رصيد مستحق (غير صفري)</td><td class="tleft num">'+supWithBalance+' من '+(DB.suppliers||[]).length+'</td></tr>' +
+    '<tr><td>عملاء مرتبطون كموردين أيضًا</td><td class="tleft num">'+(DB.customers||[]).filter(p=>p.linkedPartyId).length+'</td></tr>' +
+  '</tbody></table></div>';
   return html;
 }
 function renderTrendsAnalysis(){
@@ -4516,10 +4611,10 @@ function renderDriversTab(){
   html += '<input type="file" id="peopleImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importPeopleExcel(event)"/>';
   html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 ترتيب أعمدة الاستيراد: الاسم، الهاتف، أجر اليوم الافتراضي (الصف الأول عناوين ويُتجاهل). الاسم المطابق لسائق موجود يُحدّث بياناته.</div>';
   if(ui.driverForm) html += renderDriverForm();
-  html += '<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>الهاتف</th><th class="tleft">أجر اليوم الافتراضي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
-  if((DB.drivers||[]).length===0){ html += '<tr><td colspan="4"><div class="empty-row">لا يوجد سائقون بعد</div></td></tr>'; }
-  (DB.drivers||[]).forEach(d=>{
-    html += '<tr><td style="font-weight:600;">'+esc(d.name)+'</td><td>'+esc(d.phone||"—")+'</td>' +
+  html += '<div class="table-wrap"><table><thead><tr><th style="width:40px;">#</th><th>الاسم</th><th>الهاتف</th><th class="tleft">أجر اليوم الافتراضي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+  if((DB.drivers||[]).length===0){ html += '<tr><td colspan="5"><div class="empty-row">لا يوجد سائقون بعد</div></td></tr>'; }
+  (DB.drivers||[]).forEach((d,i)=>{
+    html += '<tr><td class="num" style="color:var(--stone-400);">'+(i+1)+'</td><td style="font-weight:600;">'+esc(d.name)+'</td><td>'+esc(d.phone||"—")+'</td>' +
       '<td class="tleft num">'+(d.dailyRate?money(d.dailyRate):"—")+'</td>' +
       '<td class="tleft"><button class="icon-btn" onclick="goToPersonStatement(\'driver\',\''+d.id+'\')" title="كشف حساب مجمّع">📊</button>' +
       '<button class="icon-btn" onclick="openDriverForm(\''+d.id+'\')">✏️</button>' +
@@ -4590,10 +4685,10 @@ function renderHelpersTab(){
   html += '<input type="file" id="peopleImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importPeopleExcel(event)"/>';
   html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 ترتيب أعمدة الاستيراد: الاسم، الهاتف، أجر اليوم الافتراضي (الصف الأول عناوين ويُتجاهل). الاسم المطابق لمساعد موجود يُحدّث بياناته.</div>';
   if(ui.helperForm) html += renderHelperForm();
-  html += '<div class="table-wrap"><table><thead><tr><th>الاسم</th><th>الهاتف</th><th class="tleft">أجر اليوم الافتراضي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
-  if((DB.helpers||[]).length===0){ html += '<tr><td colspan="4"><div class="empty-row">لا يوجد مساعدون بعد</div></td></tr>'; }
-  (DB.helpers||[]).forEach(h=>{
-    html += '<tr><td style="font-weight:600;">'+esc(h.name)+'</td><td>'+esc(h.phone||"—")+'</td>' +
+  html += '<div class="table-wrap"><table><thead><tr><th style="width:40px;">#</th><th>الاسم</th><th>الهاتف</th><th class="tleft">أجر اليوم الافتراضي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+  if((DB.helpers||[]).length===0){ html += '<tr><td colspan="5"><div class="empty-row">لا يوجد مساعدون بعد</div></td></tr>'; }
+  (DB.helpers||[]).forEach((h,i)=>{
+    html += '<tr><td class="num" style="color:var(--stone-400);">'+(i+1)+'</td><td style="font-weight:600;">'+esc(h.name)+'</td><td>'+esc(h.phone||"—")+'</td>' +
       '<td class="tleft num">'+(h.dailyRate?money(h.dailyRate):"—")+'</td>' +
       '<td class="tleft"><button class="icon-btn" onclick="goToPersonStatement(\'helper\',\''+h.id+'\')" title="كشف حساب مجمّع">📊</button>' +
       '<button class="icon-btn" onclick="openHelperForm(\''+h.id+'\')">✏️</button>' +
@@ -6807,9 +6902,15 @@ function buildStatementRows(kind, partyId){
   }
 
   DB[regKey].filter(r=>r[field]===partyId).forEach(r=>{
+    const siteBits = [];
+    if(r.loadingFactory) siteBits.push("مصنع التحميل: "+r.loadingFactory);
+    if(r.unloadingLocation) siteBits.push("مكان التعتيق: "+r.unloadingLocation);
+    const siteInfo = siteBits.join(" — ");
     rows.push({
       date:r.date,
-      desc:(isCustomers?"مبيعات":"مشتريات") + (r.description?" - "+r.description:""),
+      desc:(isCustomers?"مبيعات":"مشتريات") + (siteInfo?" — "+siteInfo:"") + (r.description?" - "+r.description:""),
+      loadingFactory: r.loadingFactory||"",
+      unloadingLocation: r.unloadingLocation||"",
       quantity: r.quantity!=null && r.quantity!=="" ? Number(r.quantity) : null,
       unitPrice: r.unitPrice!=null && r.unitPrice!=="" ? Number(r.unitPrice) : null,
       debit: isCustomers ? (Number(r.amount)||0) : 0,
@@ -6867,6 +6968,42 @@ function renderLinkedPartySummary(kind, party){
     '<button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="goToStatement(\''+otherKind+'\',\''+other.id+'\')">🔄 التبديل لعرض كشف حسابه كـ'+(otherKind==="suppliers"?"مورد":"عميل")+'</button>' +
   '</div>';
 }
+/* لوحة "مطابقة الحساب": تسجّل تاريخ ووقت آخر مرة اتأكّد فيها إن رصيد
+   العميل/المورد في البرنامج مطابق لسجلاته هو، مع الرصيد وقتها — وتنبّه
+   لو الرصيد الحالي اتغيّر عن وقت آخر مطابقة (يعني فيه حركة جديدة بعدها) */
+function renderReconciliationPanel(kind, party){
+  const bal = partyBalance(kind, party.id);
+  const hasReconciliation = !!party.lastReconciledAt;
+  let html = '<div class="form-panel" style="background:#f0fdf4; border-color:#bbf7d0;">';
+  html += '<div style="font-weight:800; margin-bottom:8px;">✅ مطابقة الحساب</div>';
+  if(hasReconciliation){
+    const changed = Math.abs((Number(party.lastReconciledBalance)||0) - bal) > 0.001;
+    html += '<div style="font-size:12.5px; line-height:1.9;">' +
+      '<div>آخر مطابقة: <b>'+new Date(party.lastReconciledAt).toLocaleString("ar-EG",{dateStyle:"medium", timeStyle:"short"})+'</b>'+(party.lastReconciledBy?' — بمعرفة: '+esc(party.lastReconciledBy):'')+'</div>' +
+      '<div>الرصيد وقت المطابقة: <b>'+money(Math.abs(Number(party.lastReconciledBalance)||0))+'</b></div>' +
+      (changed
+        ? '<div style="color:#b45309; font-weight:700; margin-top:4px;">⚠️ الرصيد الحالي مختلف عن وقت آخر مطابقة — فيه حركة جديدة بعدها لسه محتاجة مراجعة</div>'
+        : '<div style="color:#059669; font-weight:700; margin-top:4px;">✔ الرصيد الحالي لم يتغيّر منذ آخر مطابقة</div>') +
+    '</div>';
+  }else{
+    html += '<div style="font-size:12.5px; color:var(--stone-500);">لم تُسجَّل أي مطابقة لهذا الحساب بعد.</div>';
+  }
+  html += '<button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="confirmReconciliation(\''+kind+'\',\''+party.id+'\')">✅ تأكيد مطابقة الحساب الآن</button>';
+  html += '</div>';
+  return html;
+}
+function confirmReconciliation(kind, partyId){
+  if(!canEditTab("statement")){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const party = DB[kind].find(p=>p.id===partyId);
+  if(!party) return;
+  const bal = partyBalance(kind, party.id);
+  if(!confirm('تأكيد إن رصيد "'+party.name+'" الحالي ('+money(Math.abs(bal))+') مطابق لسجلاته الفعلية؟')) return;
+  party.lastReconciledAt = new Date().toISOString();
+  party.lastReconciledBalance = bal;
+  party.lastReconciledBy = currentUser() ? currentUser().displayName : "";
+  logActivity("تأكيد مطابقة حساب", party.name+" — "+money(Math.abs(bal)));
+  saveDB(); render();
+}
 function renderStatement(){
   let html = sectionHead("🖨️","كشف حساب","استعراض وطباعة كشف حساب تفصيلي لعميل أو مورد، متضمنًا الكمية والنولون (سعر الوحدة) وعمليات البيع/الشراء والدفعات");
 
@@ -6888,6 +7025,7 @@ function renderStatement(){
 
   const currentParty = DB[ui.statementPartyKind].find(p=>p.id===ui.statementPartyId);
   html += renderLinkedPartySummary(ui.statementPartyKind, currentParty);
+  html += renderReconciliationPanel(ui.statementPartyKind, currentParty);
 
   const company = loadCompanyInfo();
   html += '<div class="form-panel">' +
@@ -6912,14 +7050,26 @@ function renderStatement(){
   '</div>';
 
   const isCustomers = ui.statementPartyKind==="customers";
-  const rows = buildStatementRows(ui.statementPartyKind, ui.statementPartyId);
+  let rows = buildStatementRows(ui.statementPartyKind, ui.statementPartyId);
+  html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:10px;">' +
+    '<div style="width:220px; max-width:100%;"><label class="f-label">🔍 بحث بالمبلغ</label><input class="f-input" inputmode="decimal" placeholder="مثال: 5000" value="'+esc(ui.statementAmountSearch||"")+'" oninput="ui.statementAmountSearch=this.value; render();"/></div>' +
+    (ui.statementAmountSearch ? '<button class="btn btn-ghost btn-sm" onclick="ui.statementAmountSearch=\'\'; render();">✕ مسح البحث</button>' : '') +
+  '</div>';
+  if(ui.statementAmountSearch && ui.statementAmountSearch.trim()){
+    const term = ui.statementAmountSearch.trim().replace(/,/g,"");
+    rows = rows.filter(r=>{
+      const debitStr = r.debit ? String(Number(r.debit).toFixed(2)) : "";
+      const creditStr = r.credit ? String(Number(r.credit).toFixed(2)) : "";
+      return debitStr.indexOf(term)!==-1 || creditStr.indexOf(term)!==-1;
+    });
+  }
   html += '<div style="font-weight:800; font-size:13.5px; margin:4px 0 10px; display:flex; align-items:center; gap:6px;">' +
     '<span>📋 الكشف المعروض أسفله هو كشف حساب</span>' +
     '<span style="background:'+(isCustomers?'#dbeafe':'#fef3c7')+'; padding:2px 10px; border-radius:20px;">'+esc(currentParty.name)+' — بصفته '+(isCustomers?"عميل":"مورد")+'</span>' +
   '</div>';
   html += '<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr></thead><tbody>';
   if(rows.length===0){
-    html += '<tr><td colspan="7"><div class="empty-row">لا توجد حركة على هذا الحساب</div></td></tr>';
+    html += '<tr><td colspan="7"><div class="empty-row">'+(ui.statementAmountSearch?"لا توجد حركات بهذا المبلغ":"لا توجد حركة على هذا الحساب")+'</div></td></tr>';
   }
   rows.forEach(r=>{
     const side = r.balance>=0 ? (isCustomers?"مدين":"دائن") : (isCustomers?"دائن":"مدين");
@@ -7129,6 +7279,13 @@ function ensureExcelLib(){
   }
   return true;
 }
+/* ينظّف اسم الملف من أي رموز ممنوعة في أسماء الملفات على أغلب الأنظمة
+   (زي / اللي بتتحوّل لمسار فرعي وتكسر التنزيل) — بعض أسماء العملاء/
+   الموردين بتحتوي على "/" (مثلاً "أحمد / إخوانه") وده كان يسبب نزول
+   ملف فاضي أو تالف بدون أي رسالة خطأ ظاهرة */
+function safeFilename(name){
+  return String(name||"").replace(/[\\\/:*?"<>|]/g, "-").trim() || "ملف";
+}
 function downloadWorkbook(wb, filename){
   try{
     XLSX.writeFile(wb, filename);
@@ -7180,9 +7337,13 @@ function exportStatementExcel(){
   if(!ensureExcelLib()) return;
   const kind = ui.statementPartyKind;
   const party = DB[kind].find(p=>p.id===ui.statementPartyId);
-  if(!party) return;
+  if(!party){ alert("اختر عميلًا أو موردًا أولًا قبل التصدير."); return; }
   const isCustomers = kind==="customers";
   const rows = buildStatementRows(kind, party.id);
+  if(rows.length===0){
+    alert('لا توجد أي حركات مسجَّلة على حساب "'+party.name+'" حتى الآن — لا يوجد ما يُصدَّر.');
+    return;
+  }
   const totalDebit = rows.reduce((s,r)=>s+r.debit,0);
   const totalCredit = rows.reduce((s,r)=>s+r.credit,0);
   const finalBalance = rows.length ? rows[rows.length-1].balance : 0;
@@ -7209,7 +7370,7 @@ function exportStatementExcel(){
   ws["!views"] = [{RTL:true}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "كشف الحساب");
-  downloadWorkbook(wb, "كشف حساب - " + party.name + ".xlsx");
+  downloadWorkbook(wb, "كشف حساب - " + safeFilename(party.name) + ".xlsx");
 }
 
 /* ======================================================================
@@ -9683,6 +9844,7 @@ document.addEventListener("DOMContentLoaded", async function(){
   document.documentElement.setAttribute("dir", getLang()==="en" ? "ltr" : "rtl");
   document.documentElement.setAttribute("lang", getLang());
   if(localStorage.getItem(DARK_MODE_KEY)==="1") document.documentElement.classList.add("dark");
+  applyZoomPreference();
   const isPortalView = await checkPortalViewMode();
   if(isPortalView) return; /* وضع بوابة العميل: لا داعي لتسجيل الدخول أو تحميل بقية التطبيق */
   await seedDefaultUsersIfNeeded();
