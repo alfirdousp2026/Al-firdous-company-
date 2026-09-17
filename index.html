@@ -371,7 +371,7 @@
         <button class="icon-btn" onclick="adjustZoom(1)" title="تكبير">➕</button>
       </div>
       <div>إدارة: أ. أحمد رجب</div>
-      <div>محاسب: إيهاب محمد</div>
+      <div>محاسب: ا. إيهاب محمد</div>
       <div class="save-indicator" id="saveIndicator"></div>
     </div>
   </aside>
@@ -1985,11 +1985,23 @@ function recomputeCOGS(){
     const acc = DB.accounts.find(a=>a.id===accId);
     if(!acc || acc.type!=="asset") return; /* التكلفة التلقائية تخص حسابات المخزون (أصول) فقط */
 
-    /* دفعات الشراء المرتبطة بهذا الحساب، مرتبة من الأقدم (أول وارد) */
+    /* دفعات الشراء المرتبطة بهذا الحساب، مرتبة من الأقدم (أول وارد) —
+       عمليات "نقل" المرتبطة (linkedPurchaseId) بعملية "توريد" تُدمَج
+       تكلفتها داخل دفعة التوريد نفسها (بدل ما تتحسب كدفعة مستقلة)،
+       عشان تكلفة البضاعة المباعة تشمل تكلفة نقلها وقت الشراء أيضًا */
     const batches = DB.purchases
-      .filter(p=>p.mainAccountId===accId)
+      .filter(p=>p.mainAccountId===accId && !(p.operationType==="transport" && p.linkedPurchaseId))
       .slice().sort(byDateThenId)
-      .map(p=>({ remaining: Number(p.quantity)||0, unitCost: Number(p.unitPrice)||0 }));
+      .map(p=>{
+        const qty = Number(p.quantity)||0;
+        let totalCost = (Number(p.quantity)||0) * (Number(p.unitPrice)||0);
+        DB.purchases.forEach(t=>{
+          if(t.operationType==="transport" && t.linkedPurchaseId===p.id){
+            totalCost += (Number(t.quantity)||0) * (Number(t.unitPrice)||0);
+          }
+        });
+        return { remaining: qty, unitCost: qty>0 ? (totalCost/qty) : 0 };
+      });
 
     /* عمليات البيع المرتبطة بنفس حساب المخزون، تُسحب بنفس ترتيب الشراء (أول صادر) */
     const salesForAcc = DB.sales.filter(s=>s.inventoryAccountId===accId).slice().sort(byDateThenId);
@@ -2223,7 +2235,20 @@ function goToStatement(kind, partyId){
   ui.tab = "statement";
   ui.statementPartyKind = kind;
   ui.statementPartyId = partyId;
+  ui.statementSelectedRows = {};
   ui.entryForm = null; ui.accountForm = null; ui.partyForm = null; ui.registerForm = null; ui.voucherForm = null;
+  render();
+}
+/* تحديد/إلغاء تحديد حركة واحدة أو كل الحركات المعروضة في كشف الحساب،
+   تمهيدًا لطباعة حركات مختارة بس بدل الكشف بالكامل */
+function toggleStatementRow(seq, checked){
+  ui.statementSelectedRows = ui.statementSelectedRows || {};
+  ui.statementSelectedRows[seq] = checked;
+  render();
+}
+function selectAllStatementRows(seqList, checked){
+  ui.statementSelectedRows = ui.statementSelectedRows || {};
+  seqList.forEach(seq=>{ ui.statementSelectedRows[seq] = checked; });
   render();
 }
 function goToConsolidated(kind){
@@ -2347,7 +2372,7 @@ function renderDashboard(){
   html += '</div>';
   html += '<style>@media(min-width:760px){.an-grid{grid-template-columns:1fr 1fr !important;}}</style>';
 
-  html += '<div class="footer-note">شركة الفردوس للنقل والتوريد — تحت إدارة أ. أحمد رجب، ويتولى الأعمال المحاسبية إيهاب محمد. ' +
+  html += '<div class="footer-note">شركة الفردوس للنقل والتوريد — تحت إدارة أ. أحمد رجب، ويتولى الأعمال المحاسبية ا. إيهاب محمد. ' +
     'صافي المركز المالي الكلي = النقدية والبنك + صافي مستحقات العملاء − صافي مستحقات الموردين − صافي مستحقات السائقين والمساعدين. ' +
     'العملاء والموردون المُخفيون يدويًا من التقارير المجمّعة (👁️) لا يُحتسبون ضمن هذه الأرقام. تُحفظ جميع البيانات تلقائيًا على هذا الجهاز.</div>';
   return html;
@@ -3364,6 +3389,11 @@ function renderParties(kind){
       '<option value="credit" '+(ui.partyBalanceFilter[kind]==="credit"?"selected":"")+'>'+(isCustomers?"له رصيد دائن":"عليه رصيد دائن")+'</option>' +
       '<option value="zero" '+(ui.partyBalanceFilter[kind]==="zero"?"selected":"")+'>لا يوجد رصيد</option>' +
     '</select></div>' +
+    '<div style="width:170px;"><label class="f-label">الأرشيف</label><select class="f-input" onchange="ui.partyArchiveFilter=ui.partyArchiveFilter||{}; ui.partyArchiveFilter[\''+kind+'\']=this.value; renderPartyTable(\''+kind+'\');">' +
+      '<option value="active" '+((!ui.partyArchiveFilter||!ui.partyArchiveFilter[kind]||ui.partyArchiveFilter[kind]==="active")?"selected":"")+'>النشطون (غير المؤرشفين)</option>' +
+      '<option value="archived" '+(ui.partyArchiveFilter&&ui.partyArchiveFilter[kind]==="archived"?"selected":"")+'>المؤرشفون فقط</option>' +
+      '<option value="all" '+(ui.partyArchiveFilter&&ui.partyArchiveFilter[kind]==="all"?"selected":"")+'>الكل (نشط + مؤرشف)</option>' +
+    '</select></div>' +
     '<div style="width:180px;"><label class="f-label">الترتيب</label><select class="f-input" onchange="ui.partySort[\''+kind+'\']=this.value; renderPartyTable(\''+kind+'\');">' +
       '<option value="custom" '+(ui.partySort[kind]==="custom"?"selected":"")+'>ترتيب مخصص (يدوي)</option>' +
       '<option value="name_asc" '+(ui.partySort[kind]==="name_asc"?"selected":"")+'>الاسم (أ ← ي)</option>' +
@@ -3466,10 +3496,13 @@ function importPartiesExcel(event){
 function partyTableHtml(kind){
   const q = ui.partySearch[kind] || "";
   const balFilter = ui.partyBalanceFilter[kind] || "all";
+  const archiveFilter = (ui.partyArchiveFilter && ui.partyArchiveFilter[kind]) || "active";
   const sortMode = ui.partySort[kind] || "custom";
   const otherKind = kind==="customers" ? "suppliers" : "customers";
 
   let list = DB[kind].filter(p=>p.name.includes(q));
+  if(archiveFilter==="active") list = list.filter(p=>!p.archived);
+  else if(archiveFilter==="archived") list = list.filter(p=>!!p.archived);
   if(balFilter!=="all"){
     list = list.filter(p=>{
       const b = partyBalance(kind, p.id);
@@ -3503,12 +3536,12 @@ function partyTableHtml(kind){
         creditHtml = '<div style="font-size:10px; color:'+(overLimit?"#e11d48":"var(--stone-500)")+'; margin-top:2px;">حد ائتماني: '+money(limit)+(overLimit?' ⚠️ تجاوز':' ('+pct+'%)')+'</div>';
       }
     }
-    html += '<tr style="'+(hidden?"opacity:.55;":"")+'">' +
+    html += '<tr style="'+(hidden||p.archived?"opacity:.55;":"")+'">' +
       (isCustom ? '<td class="tleft"><button class="icon-btn" style="padding:2px 6px;" '+(i===0?"disabled":"")+' onclick="movePartyOrder(\''+kind+'\',\''+p.id+'\',-1)" title="تحريك لأعلى">▲</button><button class="icon-btn" style="padding:2px 6px;" '+(i===list.length-1?"disabled":"")+' onclick="movePartyOrder(\''+kind+'\',\''+p.id+'\',1)" title="تحريك لأسفل">▼</button></td>' : '') +
       '<td class="num" style="color:var(--stone-400);">'+(i+1)+'</td>' +
-      '<td style="font-weight:600;">'+esc(p.name)+(hidden?' <span style="font-size:10px; color:var(--stone-400);">(مخفي من التقارير)</span>':'')+'</td>' +
+      '<td style="font-weight:600;">'+esc(p.name)+(p.archived?' <span style="font-size:10px; color:#b45309; background:#fef3c7; padding:1px 6px; border-radius:8px;">📦 مؤرشف</span>':'')+(hidden?' <span style="font-size:10px; color:var(--stone-400);">(مخفي من التقارير)</span>':'')+'</td>' +
       '<td>'+esc(p.phone||"—")+'</td><td>'+esc(p.address||"—")+'</td>' +
-      '<td class="tleft num" style="font-weight:700; color:'+(bal>0?"#e11d48":"#059669")+';">'+money(bal)+creditHtml+'</td>' +
+      '<td class="tleft num" style="font-weight:700; color:'+(bal>0?"#e11d48":"#059669")+';">'+money(bal)+creditHtml+(Math.abs(bal)<=0.001 && !p.archived ? '<div style="font-size:10px; color:#059669;">✔ رصيد صفري — يمكن أرشفته</div>' : '')+'</td>' +
       '<td>'+(linked ? '<span class="badge badge-auto">🔗 '+(kind==="customers"?"مورد أيضًا":"عميل أيضًا")+': '+esc(linked.name)+'</span>' : '<span style="color:var(--stone-400); font-size:11px;">—</span>')+'</td>' +
       '<td class="tleft">' +
         '<button class="icon-btn" onclick="goToStatement(\''+kind+'\',\''+p.id+'\')" title="كشف حساب / طباعة">🖨️</button>' +
@@ -3518,7 +3551,9 @@ function partyTableHtml(kind){
           ? '<button class="icon-btn danger" onclick="unlinkParty(\''+kind+'\',\''+p.id+'\')" title="إلغاء الربط">🔓</button>'
           : '<button class="icon-btn" onclick="linkAsOpposite(\''+kind+'\',\''+p.id+'\')" title="'+(kind==="customers"?"هذا العميل مورد أيضًا":"هذا المورد عميل أيضًا")+'">🔄</button>') +
         '<button class="icon-btn" onclick="togglePartyVisibility(\''+kind+'\',\''+p.id+'\')" title="'+(hidden?"إظهار الرصيد في التقارير المجمّعة":"إخفاء الرصيد من التقارير المجمّعة")+'">'+(hidden?"🙈":"👁️")+'</button>' +
+        '<button class="icon-btn" onclick="togglePartyArchive(\''+kind+'\',\''+p.id+'\')" title="'+(p.archived?"إلغاء الأرشفة":"أرشفة (بدون حذف أي بيانات)")+'">'+(p.archived?"📤":"📦")+'</button>' +
         '<button class="icon-btn" onclick="openPartyForm(\''+kind+'\',\''+p.id+'\')">✏️</button>' +
+        '<button class="icon-btn" onclick="duplicateParty(\''+kind+'\',\''+p.id+'\')" title="نسخ">📋</button>' +
         '<button class="icon-btn danger" onclick="deleteParty(\''+kind+'\',\''+p.id+'\')">🗑️</button>' +
       '</td></tr>';
   });
@@ -3679,11 +3714,42 @@ function unlinkParty(kind, id){
   logActivity("إلغاء ربط "+(kind==="customers"?"عميل":"مورد"), p.name);
   saveDB(); render();
 }
+/* نسخ عميل/مورد كنقطة بداية سريعة لبيانات مشابهة — بيفتح نموذج "جديد"
+   معبّى ببيانات الأصل (عدا الحساب المرتبط والرصيد الافتتاحي وأي حالة
+   خاصة بالسجل الأصلي)، وتقدر تعدّل فيه قبل الحفظ كسجل مستقل تمامًا */
+function duplicateParty(kind, id){
+  if(!canEditTab(kind)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const p = DB[kind].find(x=>x.id===id);
+  if(!p) return;
+  ui.partyForm = Object.assign({}, p, {
+    kind, id:null, name: p.name+" (نسخة)",
+    accountId:null, portalToken:null, linkedPartyId:null, sortOrder:null,
+    hiddenFromReports:false, archived:false,
+    lastReconciledAt:null, lastReconciledBalance:null, lastReconciledBy:null,
+    openingBalance:"", openingBalanceDate:"",
+  });
+  render();
+}
 function togglePartyVisibility(kind, id){
   const p = DB[kind].find(x=>x.id===id);
   if(!p) return;
   p.hiddenFromReports = !p.hiddenFromReports;
   logActivity((p.hiddenFromReports?"إخفاء":"إظهار")+" "+(kind==="customers"?"عميل":"مورد")+" من التقارير المجمّعة", p.name);
+  saveDB(); render();
+}
+/* أرشفة عميل/مورد: تنقله من القائمة النشطة الافتراضية بدون حذف أي
+   بيانات — كشف حسابه وكل تاريخه يفضل زي ما هو، وتقدر تشوفه وقت ما
+   عايز من فلتر "الأرشيف" أو تلغي أرشفته في أي وقت */
+function togglePartyArchive(kind, id){
+  if(!canEditTab(kind)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const p = DB[kind].find(x=>x.id===id);
+  if(!p) return;
+  if(!p.archived){
+    const bal = partyBalance(kind, p.id);
+    if(Math.abs(bal)>0.001 && !confirm('رصيد "'+p.name+'" الحالي مش صفر ('+money(Math.abs(bal))+') — عايز تؤرشفه برضه؟')) return;
+  }
+  p.archived = !p.archived;
+  logActivity((p.archived?"أرشفة":"إلغاء أرشفة")+" "+(kind==="customers"?"عميل":"مورد"), p.name);
   saveDB(); render();
 }
 function deleteParty(kind, id){
@@ -3819,6 +3885,7 @@ function renderRegister(kind){
       '<td class="tleft">' +
         '<button class="icon-btn" onclick="printThermalReceipt(\'register\',\''+kind+'\',\''+r.id+'\')" title="طباعة إيصال حراري صغير">🧾</button>' +
         '<button class="icon-btn" onclick="openRegisterForm(\''+kind+'\',\''+r.id+'\')">✏️</button>' +
+        '<button class="icon-btn" onclick="duplicateRegisterRecord(\''+kind+'\',\''+r.id+'\')" title="نسخ (رحلة مشابهة)">📋</button>' +
         '<button class="icon-btn danger" onclick="deleteRegisterRecord(\''+kind+'\',\''+r.id+'\')">🗑️</button>' +
       '</td></tr>';
   });
@@ -3949,6 +4016,16 @@ function printRegister(kind){
     '</div>';
   openPrintArea(html);
 }
+/* نسخ عملية بيع/شراء — مفيد جدًا للرحلات المتكررة (نفس العميل/المورد،
+   نفس مصنع التحميل ومكان التعتيق، نفس السعر) — بيفتح نموذج جديد معبّى
+   بنفس البيانات، بس بتاريخ اليوم ومبلغ مسدد = صفر (عملية جديدة مستقلة) */
+function duplicateRegisterRecord(kind, id){
+  if(!canEditTab(ui.tab)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const r = DB[kind].find(x=>x.id===id);
+  if(!r) return;
+  ui.registerForm = Object.assign({}, r, {kind, id:null, date: todayISO(), paid:"0"});
+  render();
+}
 function openRegisterForm(kind, id){
   const isSales = kind==="sales";
   const partyField = isSales?"customerId":"supplierId";
@@ -3999,11 +4076,21 @@ function renderRegisterForm(){
           '<option value="">اختر '+(isSales?"عميل":"مورد")+'</option>' +
           parties.map(p=>'<option value="'+p.id+'" '+(p.id===f[partyField]?"selected":"")+'>'+esc(p.name)+'</option>').join("") +
         '</select></div>' +
-        '<div><label class="f-label">نوع العملية</label><select class="f-input" id="rf-optype">' +
+        '<div><label class="f-label">نوع العملية</label><select class="f-input" id="rf-optype" onchange="registerLiveUpdate()">' +
           '<option value="" '+(!f.operationType?"selected":"")+'>غير محدد</option>' +
           '<option value="transport" '+(f.operationType==="transport"?"selected":"")+'>نقل</option>' +
           '<option value="supply" '+(f.operationType==="supply"?"selected":"")+'>توريد</option>' +
         '</select></div>' +
+        (!isSales ? (
+        '<div id="rf-linked-wrap" style="'+(f.operationType==="transport"?"":"display:none;")+'">' +
+          '<label class="f-label">🔗 مرتبطة بعملية توريد (لدمج تكلفة النقل مع تكلفة البضاعة عند حساب الربح)</label>' +
+          '<select class="f-input" id="rf-linked-purchase">' +
+            '<option value="">بدون — تحسب كتكلفة مستقلة</option>' +
+            DB.purchases.filter(p=>p.operationType==="supply" && p.id!==f.id).slice().sort((a,b)=> a.date<b.date?1:-1)
+              .map(p=>{ const sp=DB.suppliers.find(s=>s.id===p.supplierId); return '<option value="'+p.id+'" '+(p.id===f.linkedPurchaseId?"selected":"")+'>'+fmtDate(p.date)+' — '+esc(sp?sp.name:"")+' — '+money(p.amount)+'</option>'; }).join("") +
+          '</select>' +
+          '<div style="font-size:11px; color:var(--stone-500); margin-top:3px;">اختَر عملية "توريد" البضاعة اللي نقلتها الرحلة دي، عشان تكلفة النقل تُحسَب مع تكلفة البضاعة كوحدة واحدة عند بيعها (بدل ما تتحسب تكلفة النقل بمفردها لسلعة مختلفة عن طريق نظام FIFO).</div>' +
+        '</div>') : '') +
         '<div><label class="f-label">مصنع التحميل</label><input class="f-input" id="rf-loading" value="'+esc(f.loadingFactory||"")+'" placeholder="مثال: مصنع أسمنت السويس"/></div>' +
         '<div><label class="f-label">مكان التعتيق</label><input class="f-input" id="rf-unloading" value="'+esc(f.unloadingLocation||"")+'" placeholder="مثال: موقع العميل - العاشر من رمضان"/></div>' +
         '<div><label class="f-label">اسم السائق (اختياري)</label><input class="f-input" id="rf-driver" value="'+esc(f.driverName||"")+'" placeholder="اكتب الاسم يدويًا"/></div>' +
@@ -4058,6 +4145,11 @@ function registerLiveUpdate(){
   const main = byId("rf-main").value;
   const pay = byId("rf-pay").value;
   const deferred = byId("rf-deferred").value;
+  const linkedWrap = byId("rf-linked-wrap");
+  if(linkedWrap){
+    const optype = byId("rf-optype") ? byId("rf-optype").value : "";
+    linkedWrap.style.display = optype==="transport" ? "" : "none";
+  }
 
   byId("rf-summary").innerHTML = "الإجمالي: <b>"+money(amt)+"</b> ج.م" + (remain>0?"   المتبقي: <b>"+money(remain)+"</b>":"");
 
@@ -4096,6 +4188,7 @@ function saveRegisterForm(){
     deferredAccountId: byId("rf-deferred").value,
     inventoryAccountId: isSales ? (byId("rf-inv") ? byId("rf-inv").value : "") : "",
     crossPartyId: byId("rf-cross-party") ? byId("rf-cross-party").value : "",
+    linkedPurchaseId: (!isSales && byId("rf-linked-purchase")) ? byId("rf-linked-purchase").value : "",
   };
   const amount = (Number(record.quantity)||0)*(Number(record.unitPrice)||0);
   const paidNum = Number(record.paid)||0;
@@ -4618,6 +4711,7 @@ function renderDriversTab(){
       '<td class="tleft num">'+(d.dailyRate?money(d.dailyRate):"—")+'</td>' +
       '<td class="tleft"><button class="icon-btn" onclick="goToPersonStatement(\'driver\',\''+d.id+'\')" title="كشف حساب مجمّع">📊</button>' +
       '<button class="icon-btn" onclick="openDriverForm(\''+d.id+'\')">✏️</button>' +
+      '<button class="icon-btn" onclick="duplicateDriver(\''+d.id+'\')" title="نسخ">📋</button>' +
       '<button class="icon-btn danger" onclick="deleteDriver(\''+d.id+'\')">🗑️</button></td></tr>';
   });
   html += '</tbody></table></div>';
@@ -4626,6 +4720,14 @@ function renderDriversTab(){
 function openDriverForm(id){
   if(id){ const d = DB.drivers.find(x=>x.id===id); ui.driverForm = Object.assign({}, d); }
   else{ ui.driverForm = {id:null, name:"", phone:"", dailyRate:"", openingBalance:""}; }
+  render();
+}
+/* نسخ سائق كنقطة بداية سريعة (مفيد لو عندك سائقين بنفس أجر اليوم مثلًا) */
+function duplicateDriver(id){
+  if(!canEditTab("custody")){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const d = DB.drivers.find(x=>x.id===id);
+  if(!d) return;
+  ui.driverForm = Object.assign({}, d, {id:null, name:d.name+" (نسخة)", accountId:null, openingBalance:""});
   render();
 }
 function renderDriverForm(){
@@ -6902,13 +7004,9 @@ function buildStatementRows(kind, partyId){
   }
 
   DB[regKey].filter(r=>r[field]===partyId).forEach(r=>{
-    const siteBits = [];
-    if(r.loadingFactory) siteBits.push("مصنع التحميل: "+r.loadingFactory);
-    if(r.unloadingLocation) siteBits.push("مكان التعتيق: "+r.unloadingLocation);
-    const siteInfo = siteBits.join(" — ");
     rows.push({
       date:r.date,
-      desc:(isCustomers?"مبيعات":"مشتريات") + (siteInfo?" — "+siteInfo:"") + (r.description?" - "+r.description:""),
+      desc:(isCustomers?"مبيعات":"مشتريات") + (r.description?" - "+r.description:""),
       loadingFactory: r.loadingFactory||"",
       unloadingLocation: r.unloadingLocation||"",
       quantity: r.quantity!=null && r.quantity!=="" ? Number(r.quantity) : null,
@@ -6943,9 +7041,9 @@ function buildStatementRows(kind, partyId){
 
   rows.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : 0);
   let running = 0;
-  return rows.map(r=>{
+  return rows.map((r,i)=>{
     running += isCustomers ? (r.debit-r.credit) : (r.credit-r.debit);
-    return Object.assign({}, r, {balance:running});
+    return Object.assign({}, r, {balance:running, seq:i});
   });
 }
 function esc0(v){ return v==null ? "" : String(v); }
@@ -7067,14 +7165,24 @@ function renderStatement(){
     '<span>📋 الكشف المعروض أسفله هو كشف حساب</span>' +
     '<span style="background:'+(isCustomers?'#dbeafe':'#fef3c7')+'; padding:2px 10px; border-radius:20px;">'+esc(currentParty.name)+' — بصفته '+(isCustomers?"عميل":"مورد")+'</span>' +
   '</div>';
-  html += '<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr></thead><tbody>';
+  html += '<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:8px;">' +
+    '<button class="btn btn-ghost btn-sm" onclick="selectAllStatementRows('+JSON.stringify(rows.map(r=>r.seq))+', true)">☑ تحديد الكل</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="selectAllStatementRows('+JSON.stringify(rows.map(r=>r.seq))+', false)">☐ إلغاء التحديد</button>' +
+    (Object.keys(ui.statementSelectedRows||{}).some(k=>ui.statementSelectedRows[k]) ?
+      '<button class="btn btn-primary btn-sm" onclick="printStatement(true)">🖨️ طباعة الحركات المحددة فقط</button>' : '') +
+  '</div>';
+  html += '<div class="table-wrap"><table><thead><tr><th style="width:36px;"></th><th>التاريخ</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr></thead><tbody>';
   if(rows.length===0){
-    html += '<tr><td colspan="7"><div class="empty-row">'+(ui.statementAmountSearch?"لا توجد حركات بهذا المبلغ":"لا توجد حركة على هذا الحساب")+'</div></td></tr>';
+    html += '<tr><td colspan="9"><div class="empty-row">'+(ui.statementAmountSearch?"لا توجد حركات بهذا المبلغ":"لا توجد حركة على هذا الحساب")+'</div></td></tr>';
   }
   rows.forEach(r=>{
     const side = r.balance>=0 ? (isCustomers?"مدين":"دائن") : (isCustomers?"دائن":"مدين");
-    html += '<tr><td style="white-space:nowrap;">'+fmtDate(r.date)+'</td>' +
-      '<td>'+esc(r.desc)+'</td>' +
+    const hasSite = r.loadingFactory || r.unloadingLocation;
+    const checked = !!(ui.statementSelectedRows && ui.statementSelectedRows[r.seq]);
+    html += '<tr><td class="tleft"><input type="checkbox" '+(checked?"checked":"")+' onchange="toggleStatementRow('+r.seq+', this.checked)"/></td><td style="white-space:nowrap;">'+fmtDate(r.date)+'</td>' +
+      (hasSite
+        ? '<td>'+esc(r.loadingFactory||"—")+'</td><td>'+esc(r.unloadingLocation||"—")+'</td>'
+        : '<td colspan="2" style="color:var(--stone-500);">'+esc(r.desc)+'</td>') +
       '<td class="tleft num">'+(r.quantity!=null?r.quantity:"")+'</td>' +
       '<td class="tleft num">'+(r.unitPrice!=null?money(r.unitPrice):"")+'</td>' +
       '<td class="tleft num">'+(r.debit?money(r.debit):"")+'</td>' +
@@ -7124,16 +7232,20 @@ function generateQRDataUrl(text, size){
 function printSignHtml(partyLabel){
   return '<div class="print-sign">' +
     '<div>'+esc(partyLabel||"توقيع الطرف الآخر")+'</div>' +
-    '<div>توقيع المحاسب<br/><b>إيهاب محمد</b></div>' +
+    '<div>توقيع المحاسب<br/><b>ا. إيهاب محمد</b></div>' +
     '<div>توقيع مدير الشركة<br/><b>أ. أحمد رجب</b></div>' +
   '</div>';
 }
-function printStatement(){
+function printStatement(selectedOnly){
   const kind = ui.statementPartyKind;
   const party = DB[kind].find(p=>p.id===ui.statementPartyId);
   if(!party) return;
   const isCustomers = kind==="customers";
-  const rows = buildStatementRows(kind, party.id);
+  let rows = buildStatementRows(kind, party.id);
+  if(selectedOnly){
+    rows = rows.filter(r => ui.statementSelectedRows && ui.statementSelectedRows[r.seq]);
+    if(rows.length===0){ alert("لم تُحدَّد أي حركة للطباعة."); return; }
+  }
   const totalDebit = rows.reduce((s,r)=>s+r.debit,0);
   const totalCredit = rows.reduce((s,r)=>s+r.credit,0);
   const finalBalance = rows.length ? rows[rows.length-1].balance : 0;
@@ -7151,24 +7263,28 @@ function printStatement(){
 
   let rowsHtml = "";
   rows.forEach(r=>{
+    const hasSite = r.loadingFactory || r.unloadingLocation;
+    const siteCells = hasSite
+      ? '<td>'+esc(r.loadingFactory||"—")+'</td><td>'+esc(r.unloadingLocation||"—")+'</td>'
+      : '<td colspan="2">'+esc(r.desc)+'</td>';
     if(showDetails){
-      rowsHtml += '<tr><td>'+fmtDate(r.date)+'</td><td>'+esc(r.desc)+'</td>' +
+      rowsHtml += '<tr><td>'+fmtDate(r.date)+'</td>' + siteCells +
         '<td class="tleft">'+(r.quantity!=null?r.quantity:"")+'</td>' +
         '<td class="tleft">'+(r.unitPrice!=null?money(r.unitPrice):"")+'</td>' +
         '<td class="tleft">'+(r.debit?money(r.debit):"")+'</td>' +
         '<td class="tleft">'+(r.credit?money(r.credit):"")+'</td>' +
         '<td class="tleft">'+money(Math.abs(r.balance))+'</td></tr>';
     }else{
-      rowsHtml += '<tr><td>'+fmtDate(r.date)+'</td><td>'+esc(r.desc)+'</td>' +
+      rowsHtml += '<tr><td>'+fmtDate(r.date)+'</td>' + siteCells +
         '<td class="tleft">'+(r.debit?money(r.debit):"")+'</td>' +
         '<td class="tleft">'+(r.credit?money(r.credit):"")+'</td>' +
         '<td class="tleft">'+money(Math.abs(r.balance))+'</td></tr>';
     }
   });
   const theadRow = showDetails
-    ? '<tr><th>التاريخ</th><th>البيان</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>'
-    : '<tr><th>التاريخ</th><th>البيان</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>';
-  const footColspan = showDetails ? 4 : 2;
+    ? '<tr><th>التاريخ</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>'
+    : '<tr><th>التاريخ</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>';
+  const footColspan = showDetails ? 5 : 3;
 
   const payments = rows.filter(r=>r.type==="payment");
   let paymentsHtml = "";
@@ -7194,11 +7310,12 @@ function printStatement(){
   const html =
     '<div class="print-doc theme-'+theme+'">' +
       (showWatermark ? '<div class="print-watermark">نسخة إلكترونية</div>' : '') +
-      printHeadHtml(company, "كشف حساب "+(isCustomers?"عميل":"مورد"), stmtNumber) +
+      printHeadHtml(company, "كشف حساب "+(isCustomers?"عميل":"مورد")+(selectedOnly?" (حركات مختارة)":""), stmtNumber) +
       '<div class="print-row"><span>اسم '+(isCustomers?"العميل":"المورد")+':</span><b>'+esc(party.name)+'</b></div>' +
       (party.phone?'<div class="print-row"><span>رقم الهاتف:</span><b>'+esc(party.phone)+'</b></div>':'') +
       (party.address?'<div class="print-row"><span>العنوان:</span><b>'+esc(party.address)+'</b></div>':'') +
       (party.bankAccountNumber?'<div class="print-row"><span>الحساب البنكي:</span><b>'+esc(party.bankName?party.bankName+" — ":"")+esc(party.bankAccountNumber)+'</b></div>':'') +
+      (selectedOnly ? '<div class="print-row" style="color:#b45309;"><span>ملحوظة:</span><b>هذا الكشف يعرض حركات مختارة فقط — الرصيد بجانب كل حركة هو رصيد الحساب الفعلي وقتها ضمن كامل الكشف</b></div>' : '') +
       '<table class="print-table"><thead>'+theadRow+'</thead><tbody>' +
         rowsHtml +
       '</tbody><tfoot><tr><td colspan="'+footColspan+'">الإجمالي</td><td class="tleft">'+money(totalDebit)+'</td><td class="tleft">'+money(totalCredit)+'</td><td class="tleft">'+money(Math.abs(finalBalance))+'</td></tr></tfoot></table>' +
@@ -7356,17 +7473,23 @@ function exportStatementExcel(){
     ["كشف حساب " + (isCustomers?"عميل":"مورد") + ": " + party.name],
     ["تاريخ التصدير: " + fmtDate(todayISO())],
     [],
-    ["التاريخ","البيان","الكمية","النولون","مدين","دائن","الرصيد"],
+    ["التاريخ","مصنع التحميل","مكان التعتيق","الكمية","النولون","مدين","دائن","الرصيد"],
   ];
   rows.forEach(r=>{
-    data.push([fmtDate(r.date), r.desc, r.quantity!=null?r.quantity:"", r.unitPrice!=null?r.unitPrice:"", r.debit || 0, r.credit || 0, Math.abs(r.balance)]);
+    const hasSite = r.loadingFactory || r.unloadingLocation;
+    data.push([
+      fmtDate(r.date),
+      hasSite ? (r.loadingFactory||"") : r.desc,
+      hasSite ? (r.unloadingLocation||"") : "",
+      r.quantity!=null?r.quantity:"", r.unitPrice!=null?r.unitPrice:"", r.debit || 0, r.credit || 0, Math.abs(r.balance)
+    ]);
   });
   data.push([]);
-  data.push(["","","","الإجمالي", totalDebit, totalCredit, Math.abs(finalBalance)]);
-  data.push(["","","","الرصيد الختامي","","", sideLabel]);
+  data.push(["","","","الإجمالي", "", totalDebit, totalCredit, Math.abs(finalBalance)]);
+  data.push(["","","","الرصيد الختامي","","", "", sideLabel]);
 
   const ws = XLSX.utils.aoa_to_sheet(data);
-  ws["!cols"] = [{wch:12},{wch:30},{wch:10},{wch:12},{wch:14},{wch:14},{wch:16}];
+  ws["!cols"] = [{wch:12},{wch:20},{wch:20},{wch:10},{wch:12},{wch:14},{wch:14},{wch:16}];
   ws["!views"] = [{RTL:true}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "كشف الحساب");
