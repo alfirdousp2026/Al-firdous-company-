@@ -3962,7 +3962,7 @@ function renderRegister(kind){
         '<td class="tleft num" style="color:'+(grossProfit>=0?"#059669":"#e11d48")+';">'+(r.inventoryAccountId ? money(grossProfit) : "—")+'</td>';
     }
     html += '<tr><td class="tleft"><input type="checkbox" '+((ui.bulkSelected&&ui.bulkSelected[kind]&&ui.bulkSelected[kind][r.id])?"checked":"")+' onchange="toggleBulkSelect(\''+kind+'\',\''+r.id+'\',this.checked)"/></td><td class="num" style="color:var(--stone-400);">'+(rowIdx+1)+'</td><td style="white-space:nowrap;">'+fmtDate(r.date)+'</td>' +
-      '<td>'+esc(party?party.name:"—")+(r.isDraftFromSale && !r.mainAccountId ? ' <span style="font-size:10px; color:#b45309; background:#fef3c7; padding:1px 6px; border-radius:8px;">🆕 أكمل البيانات</span>' : '')+'</td>' +
+      '<td>'+esc(party?party.name:"—")+'</td>' +
       '<td>'+(crossParty ? esc(crossParty.name) : '<span style="color:var(--stone-400);">—</span>')+'</td>' +
       '<td>'+(opTypeLabels[r.operationType] || '<span style="color:var(--stone-400); font-size:11px;">—</span>')+'</td>' +
       '<td>'+esc(r.loadingFactory||"—")+'</td>' +
@@ -4339,21 +4339,6 @@ function saveRegisterForm(){
     DB[f.kind].push(payload);
     upsertRegisterEntry(payload, isSales, party?party.name:"");
     logActivity("إضافة عملية "+(isSales?"بيع":"شراء"), (party?party.name:"")+" — "+money(amount));
-    /* عند تسجيل عملية بيع جديدة، أنشئ تلقائيًا "مسودة" عملية شراء مقابلة
-       في كشف المشتريات، معبّاة ببيانات الرحلة المشتركة فقط (الكمية،
-       السائق، مصنع التحميل، مكان التعتيق، والتاريخ) — وسيبها فاضية من
-       المورد والسعر والحسابات عشان تكمّلها إنت بنفسك من كشف المشتريات
-       لما تعرف تفاصيل الشراء الفعلية */
-    if(isSales){
-      DB.purchases.push({
-        id: uid("pu"), date: payload.date, supplierId:"",
-        operationType:"", loadingFactory: payload.loadingFactory, unloadingLocation: payload.unloadingLocation,
-        driverName: payload.driverName, quantity: payload.quantity, unitPrice:"", amount:0, paid:0,
-        mainAccountId:"", paymentAccountId:"", deferredAccountId:"", crossPartyId:"", linkedPurchaseId:"",
-        isDraftFromSale: true, sourceSaleId: payload.id,
-      });
-      logActivity("إنشاء مسودة شراء تلقائية من عملية بيع", (party?party.name:"")+" — الكمية: "+payload.quantity);
-    }
   }
   recomputeCOGS();
   const quickRepeat = ui.registerQuickRepeat && ui.registerQuickRepeat[f.kind];
@@ -7386,9 +7371,11 @@ function printStatement(selectedOnly){
   let rowsHtml = "";
   rows.forEach(r=>{
     const hasSite = r.loadingFactory || r.unloadingLocation;
-    const siteCells = hasSite
-      ? '<td>'+esc(r.loadingFactory||"—")+'</td><td>'+esc(r.unloadingLocation||"—")+'</td>'
-      : '<td colspan="2">'+esc(r.desc)+'</td>';
+    const siteBits = [];
+    if(r.loadingFactory) siteBits.push("مصنع التحميل: "+r.loadingFactory);
+    if(r.unloadingLocation) siteBits.push("مكان التعتيق: "+r.unloadingLocation);
+    const descText = r.desc + (hasSite ? " — "+siteBits.join(" — ") : "");
+    const siteCells = '<td>'+esc(descText)+'</td>';
     if(showDetails){
       rowsHtml += '<tr><td>'+fmtDate(r.date)+'</td>' + siteCells +
         '<td class="tleft">'+(r.quantity!=null?r.quantity:"")+'</td>' +
@@ -7404,9 +7391,9 @@ function printStatement(selectedOnly){
     }
   });
   const theadRow = showDetails
-    ? '<tr><th>التاريخ</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>'
-    : '<tr><th>التاريخ</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>';
-  const footColspan = showDetails ? 5 : 3;
+    ? '<tr><th>التاريخ</th><th>البيان</th><th class="tleft">الكمية</th><th class="tleft">النولون</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>'
+    : '<tr><th>التاريخ</th><th>البيان</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">الرصيد</th></tr>';
+  const footColspan = showDetails ? 4 : 2;
 
   const payments = rows.filter(r=>r.type==="payment");
   let paymentsHtml = "";
