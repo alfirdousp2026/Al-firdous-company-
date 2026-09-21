@@ -1981,14 +1981,33 @@ function recomputeCOGS(){
 
   const byDateThenId = (a,b) => a.date===b.date ? (a.id<b.id?-1:1) : (a.date<b.date?-1:1);
 
-  /* المرحلة 1: عمليات البيع المربوطة يدويًا بعمليات شراء محدَّدة (🔗 ربط دقيق)
-     تُحسَب تكلفتها مباشرة من مجموع تلك المشتريات بالظبط — بدون المرور
-     على نظام أول وارد أول صادر العام، لأنه في نشاط "رحلة/شحنة" (مش
-     مخزون سلعي متجانس)، حسابات مثل "مصنع/مكان" بتتشارك فيها شحنات
-     مختلفة تمامًا فمينفعش نعتمد على الترتيب الزمني العام لتوزيع التكلفة */
+  /* المرحلة 1: عمليات البيع المربوطة بعمليات شراء محدَّدة، بطريقتينممكنتين:
+     (أ) 🏷️ نفس "رقم/كود الرحلة" بالظبط بين البيع والشراء (الطريقة الأبسط
+         والموصى بها — تكفي كتابة نفس الرقم في الطرفين، من غير اختيار من قائمة)
+     (ب) 🔗 ربط دقيق يدوي باختيار عمليات شراء محدَّدة من قائمة
+     التكلفة في الحالتين تُحسَب مباشرة من مجموع تلك المشتريات بالظبط —
+     بدون المرور على نظام أول وارد أول صادر العام، لأنه في نشاط
+     "رحلة/شحنة" (مش مخزون سلعي متجانس)، حسابات مثل "مصنع/مكان" بتتشارك
+     فيها شحنات مختلفة تمامًا فمينفعش نعتمد على الترتيب الزمني العام
+     لتوزيع التكلفة. لو الطريقتان مُستخدَمتان معًا لنفس العملية، تُفضَّل
+     المطابقة برقم الرحلة (الأبسط) وتُتجاهل قائمة الربط اليدوي لتفادي
+     احتساب نفس المشتريات مرتين. */
   const directlyLinkedPurchaseIds = new Set();
   DB.sales.forEach(s=>{
-    if(Array.isArray(s.linkedPurchaseIds) && s.linkedPurchaseIds.length){
+    const trip = (s.tripNumber||"").trim();
+    if(trip){
+      let cost = 0, qty = 0;
+      DB.purchases.forEach(p=>{
+        if((p.tripNumber||"").trim()===trip){
+          cost += (Number(p.quantity)||0) * (Number(p.unitPrice)||0);
+          qty += Number(p.quantity)||0;
+          directlyLinkedPurchaseIds.add(p.id);
+        }
+      });
+      s.cogsAmount = Math.round(cost*100)/100;
+      s.cogsQuantity = Math.round(qty*1000)/1000;
+      s.cogsShortfall = 0;
+    }else if(Array.isArray(s.linkedPurchaseIds) && s.linkedPurchaseIds.length){
       let cost = 0, qty = 0;
       s.linkedPurchaseIds.forEach(pid=>{
         const p = DB.purchases.find(x=>x.id===pid);
@@ -2003,9 +2022,9 @@ function recomputeCOGS(){
     }
   });
 
-  /* المرحلة 2: باقي عمليات البيع (غير المربوطة يدويًا) تُحسب كالمعتاد
+  /* المرحلة 2: باقي عمليات البيع (غير المربوطة بأي طريقة) تُحسب كالمعتاد
      بنظام أول وارد أول صادر لكل حساب مخزون — باستثناء أي عملية شراء
-     سبق ربطها يدويًا بعملية بيع في المرحلة 1 (تجنّبًا لاحتساب تكلفتها مرتين) */
+     سبق ربطها في المرحلة 1 (تجنّبًا لاحتساب تكلفتها مرتين) */
   accIds.forEach(accId=>{
     const acc = DB.accounts.find(a=>a.id===accId);
     if(!acc || acc.type!=="asset") return; /* التكلفة التلقائية تخص حسابات المخزون (أصول) فقط */
@@ -2014,7 +2033,7 @@ function recomputeCOGS(){
        عمليات "نقل" المرتبطة (linkedPurchaseId) بعملية "توريد" تُدمَج
        تكلفتها داخل دفعة التوريد نفسها (بدل ما تتحسب كدفعة مستقلة)،
        عشان تكلفة البضاعة المباعة تشمل تكلفة نقلها وقت الشراء أيضًا.
-       المشتريات المربوطة يدويًا ببيع محدَّد (المرحلة 1) تُستبعد هنا تمامًا. */
+       المشتريات المربوطة بالفعل ببيع محدَّد (المرحلة 1) تُستبعد هنا تمامًا. */
     const batches = DB.purchases
       .filter(p=>p.mainAccountId===accId && !directlyLinkedPurchaseIds.has(p.id) && !(p.operationType==="transport" && p.linkedPurchaseId))
       .slice().sort(byDateThenId)
@@ -2029,9 +2048,9 @@ function recomputeCOGS(){
         return { remaining: qty, unitCost: qty>0 ? (totalCost/qty) : 0 };
       });
 
-    /* عمليات البيع المرتبطة بنفس حساب المخزون (فيما عدا المربوطة يدويًا
-       بالفعل في المرحلة 1)، تُسحب بنفس ترتيب الشراء (أول صادر) */
-    const salesForAcc = DB.sales.filter(s=>s.inventoryAccountId===accId && !(Array.isArray(s.linkedPurchaseIds) && s.linkedPurchaseIds.length)).slice().sort(byDateThenId);
+    /* عمليات البيع المرتبطة بنفس حساب المخزون (فيما عدا المربوطة بالفعل
+       في المرحلة 1)، تُسحب بنفس ترتيب الشراء (أول صادر) */
+    const salesForAcc = DB.sales.filter(s=>s.inventoryAccountId===accId && !((s.tripNumber||"").trim()) && !(Array.isArray(s.linkedPurchaseIds) && s.linkedPurchaseIds.length)).slice().sort(byDateThenId);
 
     salesForAcc.forEach(sale=>{
       let need = Number(sale.quantity)||0;
@@ -3793,9 +3812,10 @@ function countBulkSelected(ns){
 }
 function bulkSelectBarHtml(ns, ids){
   const n = countBulkSelected(ns);
+  const idsAttr = esc(JSON.stringify(ids));
   return '<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px;">' +
-    '<button class="btn btn-ghost btn-sm" onclick="selectAllBulk(\''+ns+'\','+JSON.stringify(ids)+', true)">☑ تحديد الكل</button>' +
-    '<button class="btn btn-ghost btn-sm" onclick="selectAllBulk(\''+ns+'\','+JSON.stringify(ids)+', false)">☐ إلغاء التحديد</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="selectAllBulk(\''+ns+'\','+idsAttr+', true)">☑ تحديد الكل</button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="selectAllBulk(\''+ns+'\','+idsAttr+', false)">☐ إلغاء التحديد</button>' +
     (n>0 ? '<button class="btn btn-primary btn-sm" style="background:#e11d48;" onclick="bulkDeleteSelected(\''+ns+'\')">🗑️ حذف المحدد ('+n+')</button>' : '') +
   '</div>';
 }
@@ -4115,7 +4135,7 @@ function duplicateRegisterRecord(kind, id){
   if(!canEditTab(ui.tab)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
   const r = DB[kind].find(x=>x.id===id);
   if(!r) return;
-  ui.registerForm = Object.assign({}, r, {kind, id:null, date: todayISO(), paid:"0"});
+  ui.registerForm = Object.assign({}, r, {kind, id:null, date: todayISO(), paid:"0", linkedPurchaseIds:[], tripNumber:""});
   render();
 }
 function openRegisterForm(kind, id){
@@ -4131,7 +4151,7 @@ function openRegisterForm(kind, id){
 
   if(id){
     const r = DB[kind].find(x=>x.id===id);
-    ui.registerForm = Object.assign({kind}, r);
+    ui.registerForm = Object.assign({kind}, r, {linkedPurchaseIds: Array.isArray(r.linkedPurchaseIds) ? r.linkedPurchaseIds.slice() : []});
   }else{
     ui.registerForm = {
       kind, id:null, date:todayISO(), [partyField]:"", operationType:"", loadingFactory:"", unloadingLocation:"", driverName:"",
@@ -4186,6 +4206,9 @@ function renderRegisterForm(){
         '<div><label class="f-label">مصنع التحميل</label><input class="f-input" id="rf-loading" value="'+esc(f.loadingFactory||"")+'" placeholder="مثال: مصنع أسمنت السويس"/></div>' +
         '<div><label class="f-label">مكان التعتيق</label><input class="f-input" id="rf-unloading" value="'+esc(f.unloadingLocation||"")+'" placeholder="مثال: موقع العميل - العاشر من رمضان"/></div>' +
         '<div><label class="f-label">اسم السائق (اختياري)</label><input class="f-input" id="rf-driver" value="'+esc(f.driverName||"")+'" placeholder="اكتب الاسم يدويًا"/></div>' +
+        '<div><label class="f-label">🏷️ رقم/كود الرحلة (اختياري — طريقة أبسط لحساب تكلفة البضاعة)</label><input class="f-input" id="rf-trip-number" value="'+esc(f.tripNumber||"")+'" placeholder="مثال: 1 أو R25"/>' +
+          '<div style="font-size:11px; color:var(--stone-500); margin-top:3px;">اكتب نفس الرقم بالظبط في عملية الشراء (توريد + نقل) وعملية البيع الخاصة بنفس الرحلة — تكلفة البضاعة عند البيع هتتحسب تلقائيًا كمجموع كل عمليات الشراء اللي عليها نفس الرقم، بدل الاختيار من قائمة أو الاعتماد على ترتيب المخزون العام. أسهل وأدق من الربط اليدوي.</div>' +
+        '</div>' +
         '<div><label class="f-label">الكمية (طن)</label><input class="f-input" type="number" id="rf-qty" value="'+esc(f.quantity)+'" oninput="registerLiveUpdate()"/></div>' +
         '<div><label class="f-label">سعر الوحدة</label><input class="f-input" type="number" id="rf-price" value="'+esc(f.unitPrice)+'" oninput="registerLiveUpdate()"/></div>' +
         '<div><label class="f-label">المبلغ المسدد الآن</label><input class="f-input" type="number" id="rf-paid" value="'+esc(f.paid)+'" oninput="registerLiveUpdate()"/></div>' +
@@ -4216,15 +4239,20 @@ function renderRegisterForm(){
         '</select><div style="font-size:11px; color:var(--stone-500); margin-top:3px;">اختره فقط إذا كانت هذه العملية تبيع بضاعة سبق شراؤها (نفس نوع المخزون) — سيتم احتساب تكلفتها تلقائيًا من سعر الشراء (أول وارد أول صادر) وخصمها من صافي الربح.</div></div>'
         : '') +
         (isSales ?
-        '<div><label class="f-label">🔗 ربط دقيق بعمليات الشراء الخاصة بهذه الرحلة (اختياري، لتكلفة دقيقة 100%)</label>' +
-          '<select class="f-input" id="rf-linked-sale-purchases" multiple size="4">' +
+        '<div><label class="f-label">🔗 ربط دقيق بعمليات الشراء الخاصة بهذه الرحلة (اختياري، لتكلفة دقيقة 100% — أو استخدم رقم الرحلة أعلاه، أسهل)</label>' +
+          '<input class="f-input" placeholder="🔍 بحث بالمورد أو التاريخ..." oninput="filterLinkedPurchaseList(this.value)" style="margin-bottom:6px;"/>' +
+          '<div id="rf-linked-purchase-list" style="max-height:220px; overflow-y:auto; border:1px solid var(--stone-300); border-radius:8px; padding:6px;">' +
             DB.purchases.slice().sort((a,b)=> a.date<b.date?1:-1).map(p=>{
               const sp = DB.suppliers.find(s=>s.id===p.supplierId);
               const isSelected = Array.isArray(f.linkedPurchaseIds) && f.linkedPurchaseIds.indexOf(p.id)!==-1;
-              return '<option value="'+p.id+'" '+(isSelected?"selected":"")+'>'+fmtDate(p.date)+' — '+esc(sp?sp.name:"")+' — '+(p.operationType==="transport"?"نقل":p.operationType==="supply"?"توريد":"—")+' — الكمية: '+(p.quantity||0)+' — '+money(p.amount)+'</option>';
+              const label = fmtDate(p.date)+' — '+(sp?sp.name:"")+' — '+(p.operationType==="transport"?"نقل":p.operationType==="supply"?"توريد":"—")+' — الكمية: '+(p.quantity||0)+' — '+money(p.amount);
+              return '<label class="linked-purchase-row" data-search="'+esc(label.toLowerCase())+'" style="display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid var(--stone-100); cursor:pointer;">' +
+                '<input type="checkbox" '+(isSelected?"checked":"")+' onchange="toggleLinkedPurchase(\''+p.id+'\', this.checked)"/>' +
+                '<span style="font-size:12.5px;">'+esc(label)+'</span>' +
+              '</label>';
             }).join("") +
-          '</select>' +
-          '<div style="font-size:11px; color:var(--stone-500); margin-top:3px;">لو رحلة البيع دي ليها عمليتا شراء منفصلتان (توريد البضاعة + نقلها)، اضغط مع الاستمرار (أو Ctrl على الكمبيوتر) واختَر الاتنين هنا — تكلفة البضاعة هتُحسب كمجموعهما بالظبط، بدل الاعتماد على ترتيب المخزون العام (FIFO) اللي ممكن يخلط بين شحنات مختلفة تشترك في نفس الحساب الرئيسي.</div>' +
+          '</div>' +
+          '<div style="font-size:11px; color:var(--stone-500); margin-top:3px;">لو رحلة البيع دي ليها عمليتا شراء منفصلتان (توريد البضاعة + نقلها)، حدّد الاتنين هنا بعلامة ✓ — تكلفة البضاعة هتُحسب كمجموعهما بالظبط، بدل الاعتماد على ترتيب المخزون العام (FIFO) اللي ممكن يخلط بين شحنات مختلفة تشترك في نفس الحساب الرئيسي.</div>' +
         '</div>'
         : '') +
       '</div>' +
@@ -4238,6 +4266,31 @@ function renderRegisterForm(){
       '</div>' +
     '</div>'
   );
+}
+/* فلترة قائمة "الربط الدقيق بعمليات الشراء" أثناء الكتابة — فلترة داخل
+   المتصفح مباشرة (بدون إعادة رسم الصفحة كلها) عشان تفضل سريعة وسلسة
+   حتى لو عدد المشتريات كبير، ومتحافظش على موضع تمرير القائمة */
+function filterLinkedPurchaseList(term){
+  const box = byId("rf-linked-purchase-list");
+  if(!box) return;
+  const t = (term||"").trim().toLowerCase();
+  Array.from(box.querySelectorAll(".linked-purchase-row")).forEach(row=>{
+    const hay = row.getAttribute("data-search") || "";
+    row.style.display = (!t || hay.indexOf(t)!==-1) ? "" : "none";
+  });
+}
+/* تحديد/إلغاء تحديد عملية شراء في قائمة الربط الدقيق — بيحدّث حالة
+   النموذج مباشرة في الذاكرة (ui.registerForm.linkedPurchaseIds) بدون
+   حاجة لإعادة رسم النموذج بالكامل عند كل ضغطة */
+function toggleLinkedPurchase(purchaseId, checked){
+  const f = ui.registerForm;
+  if(!f) return;
+  f.linkedPurchaseIds = Array.isArray(f.linkedPurchaseIds) ? f.linkedPurchaseIds : [];
+  if(checked){
+    if(f.linkedPurchaseIds.indexOf(purchaseId)===-1) f.linkedPurchaseIds.push(purchaseId);
+  }else{
+    f.linkedPurchaseIds = f.linkedPurchaseIds.filter(id=>id!==purchaseId);
+  }
 }
 function registerLiveUpdate(){
   const qty = Number(byId("rf-qty").value)||0;
@@ -4284,6 +4337,7 @@ function saveRegisterForm(){
     loadingFactory: byId("rf-loading").value.trim(),
     unloadingLocation: byId("rf-unloading").value.trim(),
     driverName: byId("rf-driver") ? byId("rf-driver").value.trim() : "",
+    tripNumber: byId("rf-trip-number") ? byId("rf-trip-number").value.trim() : "",
     quantity: byId("rf-qty").value,
     unitPrice: byId("rf-price").value,
     paid: byId("rf-paid").value,
@@ -4291,7 +4345,7 @@ function saveRegisterForm(){
     paymentAccountId: byId("rf-pay").value,
     deferredAccountId: byId("rf-deferred").value,
     inventoryAccountId: isSales ? (byId("rf-inv") ? byId("rf-inv").value : "") : "",
-    linkedPurchaseIds: (isSales && byId("rf-linked-sale-purchases")) ? Array.from(byId("rf-linked-sale-purchases").selectedOptions).map(o=>o.value) : [],
+    linkedPurchaseIds: isSales ? (Array.isArray(f.linkedPurchaseIds) ? f.linkedPurchaseIds : []) : [],
     crossPartyId: byId("rf-cross-party") ? byId("rf-cross-party").value : "",
     linkedPurchaseId: (!isSales && byId("rf-linked-purchase")) ? byId("rf-linked-purchase").value : "",
   };
