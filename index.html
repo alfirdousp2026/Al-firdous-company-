@@ -680,6 +680,14 @@ function saveDB(){
 const SESSION_KEY = "ferdaws-session-v1";
 const HIDDEN_NAV_KEY = "ferdaws-hidden-nav-v1";
 const NAV_ORDER_KEY = "ferdaws-nav-order-v1";
+const LAST_TAB_KEY = "ferdaws-last-tab-v1";
+const SCROLL_POS_KEY = "ferdaws-scroll-pos-v1";
+function loadScrollPositions(){
+  try{ return JSON.parse(localStorage.getItem(SCROLL_POS_KEY)) || {}; }catch(e){ return {}; }
+}
+function saveScrollPositions(){
+  try{ localStorage.setItem(SCROLL_POS_KEY, JSON.stringify(ui.scrollPositions||{})); }catch(e){}
+}
 const DEFAULT_RECOVERY_ANSWER = "فردوس2026";
 
 async function hashText(text){
@@ -752,6 +760,11 @@ function showApp(){
   byId("authScreen").style.display = "none";
   byId("app").style.display = "flex";
   try{ if(canEditTab("recurring")) generateDueRecurringEntries(); }catch(e){ /* لا يجب أن يوقف تسجيل الدخول */ }
+  ui.scrollPositions = loadScrollPositions();
+  try{
+    const savedTab = localStorage.getItem(LAST_TAB_KEY);
+    if(savedTab && visibleNav().some(n=>n.id===savedTab)) ui.tab = savedTab;
+  }catch(e){ /* تجاهل واستخدم التبويب الافتراضي */ }
   render();
   applySidebarLogo();
   applyDarkModePreference();
@@ -1255,9 +1268,37 @@ const NAV_LABELS_EN = {
 function renderActivityLog(){
   let html = sectionHead("📜","سجل العمليات","سجل بالعمليات الهامة التي تمت على النظام: من قام بها ومتى",
     can("resetData") ? '<button class="btn btn-ghost" onclick="clearActivityLog()">🗑️ مسح السجل</button>' : '');
-  const log = (DB.activityLog||[]).slice().reverse();
+
+  html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
+    '<div style="width:170px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(ui.activityLogFilterMonth||"")+'" onchange="ui.activityLogFilterMonth=this.value; updateActivityLogBody();"/></div>' +
+    '<div style="width:220px;"><label class="f-label">🔍 بحث بالاسم (المستخدم/العملية/التفاصيل)</label><input class="f-input" value="'+esc(ui.activityLogSearch||"")+'" placeholder="اكتب اسم المستخدم أو جزءًا من العملية" oninput="ui.activityLogSearch=this.value; updateActivityLogBody();"/></div>' +
+  '</div>';
+  html += '<div id="activity-log-body">' + renderActivityLogBody() + '</div>';
+  return html;
+}
+function updateActivityLogBody(){
+  const el = byId("activity-log-body");
+  if(el) el.innerHTML = renderActivityLogBody();
+}
+function renderActivityLogBody(){
+  let log = (DB.activityLog||[]).slice().reverse();
+  if(ui.activityLogFilterMonth){
+    log = log.filter(l=> String(l.at||"").slice(0,7)===ui.activityLogFilterMonth);
+  }
+  if(ui.activityLogSearch && ui.activityLogSearch.trim()){
+    const term = ui.activityLogSearch.trim().toLowerCase();
+    log = log.filter(l=>
+      String(l.userName||"").toLowerCase().indexOf(term)!==-1 ||
+      String(l.action||"").toLowerCase().indexOf(term)!==-1 ||
+      String(l.details||"").toLowerCase().indexOf(term)!==-1
+    );
+  }
+  let html = "";
+  if(ui.activityLogFilterMonth||ui.activityLogSearch){
+    html += '<div style="margin:-4px 0 14px;"><button class="btn btn-ghost btn-sm" onclick="ui.activityLogFilterMonth=\'\'; ui.activityLogSearch=\'\'; render();">✕ مسح الفلاتر</button></div>';
+  }
   html += '<div class="table-wrap"><table><thead><tr><th>التاريخ والوقت</th><th>المستخدم</th><th>العملية</th><th>تفاصيل</th></tr></thead><tbody>';
-  if(log.length===0){ html += '<tr><td colspan="4"><div class="empty-row">لا توجد عمليات مسجّلة بعد</div></td></tr>'; }
+  if(log.length===0){ html += '<tr><td colspan="4"><div class="empty-row">لا توجد عمليات مطابقة</div></td></tr>'; }
   log.slice(0,300).forEach(l=>{
     const dt = new Date(l.at);
     const dtLabel = isNaN(dt.getTime()) ? l.at : (dt.toLocaleDateString("ar-EG")+" "+dt.toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"}));
@@ -1763,6 +1804,7 @@ function renderSync(){
 /* واجهة الحالة المؤقتة (أي نموذج مفتوح حاليًا) */
 const ui = {
   tab: "dashboard",
+  scrollPositions: {},
   entryForm: null,      // {id, date, description, lines:[], isAdjustment}
   accountForm: null,    // {id, code, name, type, normal}
   ledgerAccountId: null,
@@ -2196,15 +2238,24 @@ function render(){
   renderSidebar();
   renderBottomNav();
   renderUserChip();
+  const switchingTab = ui.tab !== lastRenderedTab;
+  if(switchingTab && lastRenderedTab!=null){
+    ui.scrollPositions[lastRenderedTab] = window.scrollY;
+    saveScrollPositions();
+  }
   byId("content").innerHTML = renderTab(ui.tab);
   renderPendingQRCodes();
   renderPendingCharts();
   if(ui.tab==="sync") fetchConnectedDevices();
-  /* التمرير لأعلى الصفحة بس لما تتغيّر الصفحة (تبويب جديد) — أما أي
-     إجراء بيحصل داخل نفس الصفحة (حذف، تعديل، إضافة...) فيحافظ على
-     موضع التمرير الحالي بدل ما يرجّعك لأول الصفحة كل مرة */
-  if(ui.tab !== lastRenderedTab){
-    window.scrollTo(0,0);
+  /* التمرير لموضع محفوظ بس لما تتغيّر الصفحة (تبويب جديد) — يرجعك لنفس
+     المكان اللي كنت واقف عنده في هذه الصفحة آخر مرة (ويفضل كذلك بعد
+     تحديث الصفحة بالسحب لأسفل أو إعادة فتح التطبيق، لأنه محفوظ محليًا).
+     أما أي إجراء بيحصل داخل نفس الصفحة (حذف، تعديل، إضافة...) فيحافظ
+     على موضع التمرير الحالي بدل ما يرجّعك لأول الصفحة كل مرة */
+  if(switchingTab){
+    localStorage.setItem(LAST_TAB_KEY, ui.tab);
+    const savedY = (ui.scrollPositions && ui.scrollPositions[ui.tab]) || 0;
+    requestAnimationFrame(function(){ window.scrollTo(0, savedY); });
     lastRenderedTab = ui.tab;
   }
 }
@@ -2603,7 +2654,7 @@ function renderJournal(isAdjustment){
     '<div style="width:150px;"><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(ui.journalFilterFrom||"")+'" onchange="ui.journalFilterFrom=this.value; render();"/></div>' +
     '<div style="width:150px;"><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(ui.journalFilterTo||"")+'" onchange="ui.journalFilterTo=this.value; render();"/></div>' +
     '<div style="width:150px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(ui.journalFilterMonth||"")+'" onchange="ui.journalFilterMonth=this.value; render();"/></div>' +
-    '<div style="width:200px;"><label class="f-label">🔍 بحث برقم القيد أو البيان</label><input class="f-input" placeholder="مثال: 105 أو اسم العميل" value="'+esc(ui.journalSearch||"")+'" oninput="ui.journalSearch=this.value; render();"/></div>' +
+    '<div style="width:200px;"><label class="f-label">🔍 بحث برقم القيد أو البيان</label><input class="f-input" value="'+esc(ui.journalSearch||"")+'" placeholder="مثال: 105 أو اسم العميل" oninput="ui.journalSearch=this.value; updateJournalBody('+isAdjustment+');"/></div>' +
     '<div style="width:170px;"><label class="f-label">الترتيب</label><select class="f-input" onchange="ui.journalSort=this.value; render();">' +
       '<option value="date_desc" '+((ui.journalSort||"date_desc")==="date_desc"?"selected":"")+'>الأحدث أولًا</option>' +
       '<option value="date_asc" '+(ui.journalSort==="date_asc"?"selected":"")+'>الأقدم أولًا</option>' +
@@ -2612,8 +2663,21 @@ function renderJournal(isAdjustment){
       '<option value="amount_desc" '+(ui.journalSort==="amount_desc"?"selected":"")+'>المبلغ (الأعلى أولًا)</option>' +
       '<option value="amount_asc" '+(ui.journalSort==="amount_asc"?"selected":"")+'>المبلغ (الأقل أولًا)</option>' +
     '</select></div>' +
-    ((ui.journalFilterFrom||ui.journalFilterTo||ui.journalFilterMonth||ui.journalSearch) ? '<button class="btn btn-ghost btn-sm" onclick="ui.journalFilterFrom=\'\'; ui.journalFilterTo=\'\'; ui.journalFilterMonth=\'\'; ui.journalSearch=\'\'; render();">✕ مسح الفلاتر</button>' : '') +
   '</div>';
+  html += '<div id="journal-body-'+(isAdjustment?"adj":"main")+'">' + renderJournalBody(isAdjustment) + '</div>';
+  return html;
+}
+/* يُعيد رسم قائمة القيود فقط داخل حاوية journal-body، بدل إعادة رسم
+   الصفحة كاملة — عشان مربع البحث برقم القيد/البيان مايفقدش التركيز
+   (focus) مع كل حرف يُكتب فيه */
+function updateJournalBody(isAdjustment){
+  const el = byId("journal-body-"+(isAdjustment?"adj":"main"));
+  if(el) el.innerHTML = renderJournalBody(isAdjustment);
+}
+function renderJournalBody(isAdjustment){
+  let list = DB.entries.filter(e => !!e.isAdjustment===isAdjustment);
+  const accMap = accountsById();
+  let html = "";
   if(ui.journalFilterFrom) list = list.filter(e=>e.date>=ui.journalFilterFrom);
   if(ui.journalFilterTo) list = list.filter(e=>e.date<=ui.journalFilterTo);
   if(ui.journalFilterMonth) list = list.filter(e=>(e.date||"").slice(0,7)===ui.journalFilterMonth);
@@ -2623,6 +2687,9 @@ function renderJournal(isAdjustment){
       String(e.entryNumber||"").toLowerCase().indexOf(term)!==-1 ||
       String(e.description||"").toLowerCase().indexOf(term)!==-1
     );
+  }
+  if(ui.journalFilterFrom||ui.journalFilterTo||ui.journalFilterMonth||ui.journalSearch){
+    html += '<div style="margin:-4px 0 14px;"><button class="btn btn-ghost btn-sm" onclick="ui.journalFilterFrom=\'\'; ui.journalFilterTo=\'\'; ui.journalFilterMonth=\'\'; ui.journalSearch=\'\'; render();">✕ مسح الفلاتر</button></div>';
   }
   const sortMode = ui.journalSort || "date_desc";
   const entryTotal = e => e.lines.reduce((s,l)=>s+(Number(l.debit)||0),0);
@@ -3594,7 +3661,7 @@ function partyTableHtml(kind){
       '<td class="tleft">' +
         '<button class="icon-btn" onclick="goToStatement(\''+kind+'\',\''+p.id+'\')" title="كشف حساب / طباعة">🖨️</button>' +
         '<button class="icon-btn" onclick="openPartyPortalPanel(\''+kind+'\',\''+p.id+'\')" title="بوابة '+(kind==="customers"?"العميل":"المورد")+'">🔗</button>' +
-        (kind==="customers" && bal>0.001 ? '<button class="icon-btn" onclick="sendBalanceWhatsApp(\''+p.id+'\')" title="إرسال الرصيد عبر واتساب">📱</button>' : '') +
+        (kind==="customers" && customerNetBalance(p.id)>0.001 ? '<button class="icon-btn" onclick="sendBalanceWhatsApp(\''+p.id+'\')" title="إرسال الرصيد عبر واتساب (صافي الرصيد لو مورد أيضًا)">📱</button>' : '') +
         (linked
           ? '<button class="icon-btn danger" onclick="unlinkParty(\''+kind+'\',\''+p.id+'\')" title="إلغاء الربط">🔓</button>'
           : '<button class="icon-btn" onclick="linkAsOpposite(\''+kind+'\',\''+p.id+'\')" title="'+(kind==="customers"?"هذا العميل مورد أيضًا":"هذا المورد عميل أيضًا")+'">🔄</button>') +
@@ -3879,10 +3946,14 @@ function renderRegister(kind){
     isSales?"📦":"🛒", isSales?"كشف المبيعات":"كشف المشتريات",
     isSales?"سجل عمليات بيع خدمات النقل والأسمنت للعملاء — يُنشئ قيد يومية تلقائيًا":"سجل عمليات شراء الأسمنت ومستلزمات النقل من الموردين — يُنشئ قيد يومية تلقائيًا",
     '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<button class="btn btn-ghost" onclick="exportRegisterExcel(\''+kind+'\')">📊 تصدير إكسيل</button>' +
+      '<button class="btn btn-ghost" onclick="ui.registerImportKind=\''+kind+'\'; byId(\'registerImportInput\').click();">📥 استيراد من إكسيل</button>' +
       (canEditTab(isSales?"salesReg":"purchases") ? '<button class="btn btn-ghost" style="color:#e11d48;" onclick="resetEntireList(\''+kind+'\')">🗑️ تصفير القائمة</button>' : '') +
       '<button class="btn btn-primary" onclick="openRegisterForm(\''+kind+'\')">➕ '+(isSales?"عملية بيع":"عملية شراء")+'</button>' +
     '</div>'
   );
+  html += '<input type="file" id="registerImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importRegisterExcel(event)"/>';
+  html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — التاريخ (YYYY-MM-DD)، اسم '+(isSales?"العميل":"المورد")+'، نوع العملية (نقل/توريد/فارغ)، الكمية، سعر الوحدة، المبلغ المسدد، مصنع التحميل، مكان التعتيق، اسم السائق، رقم الرحلة، اسم الجهة المرتبطة، كود الحساب الرئيسي، كود حساب السداد، كود حساب '+(isSales?"العملاء":"الموردين")+' الآجل'+(isSales?'، كود حساب المخزون':'')+' (الصف الأول عناوين ويُتجاهل). الاسم غير الموجود يُضاف تلقائيًا كجهة جديدة، وأكواد الحسابات الفارغة أو غير الصحيحة تُستبدَل بالحسابات الافتراضية. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
 
   if(ui.registerForm && ui.registerForm.kind===kind) html += renderRegisterForm();
 
@@ -3899,10 +3970,30 @@ function renderRegister(kind){
       '<option value="transport" '+(ui.registerTypeFilter[kind]==="transport"?"selected":"")+'>نقل</option>' +
       '<option value="supply" '+(ui.registerTypeFilter[kind]==="supply"?"selected":"")+'>توريد</option>' +
     '</select></div>' +
-    '<div style="width:190px;"><label class="f-label">🔍 بحث باسم '+(isSales?"العميل":"المورد")+'</label><input class="f-input" placeholder="اكتب جزء من الاسم" value="'+esc(ui.registerSearch[kind]||"")+'" oninput="ui.registerSearch[\''+kind+'\']=this.value; render();"/></div>' +
-    '<div style="width:150px;"><label class="f-label">🔍 بحث بالكمية</label><input class="f-input" inputmode="decimal" placeholder="مثال: 60.9" value="'+esc(ui.registerQtySearch[kind]||"")+'" oninput="ui.registerQtySearch[\''+kind+'\']=this.value; render();"/></div>' +
-    ((ui.registerFilterFrom||ui.registerFilterTo||ui.registerDayFilter[kind]||ui.registerTypeFilter[kind]!=="all"||ui.registerSearch[kind]||ui.registerQtySearch[kind]) ? '<button class="btn btn-ghost btn-sm" onclick="ui.registerFilterFrom=\'\'; ui.registerFilterTo=\'\'; ui.registerDayFilter[\''+kind+'\']=\'\'; ui.registerTypeFilter[\''+kind+'\']=\'all\'; ui.registerSearch[\''+kind+'\']=\'\'; ui.registerQtySearch[\''+kind+'\']=\'\'; render();">✕ مسح الفلاتر</button>' : '') +
+    '<div style="width:190px;"><label class="f-label">🔍 بحث باسم '+(isSales?"العميل":"المورد")+' (مطابقة كاملة)</label><input class="f-input" value="'+esc(ui.registerSearch[kind]||"")+'" placeholder="اكتب الاسم كاملًا" oninput="ui.registerSearch[\''+kind+'\']=this.value; updateRegisterBody(\''+kind+'\');"/></div>' +
+    '<div style="width:150px;"><label class="f-label">🔍 بحث بالكمية (مطابقة كاملة)</label><input class="f-input" inputmode="decimal" value="'+esc(ui.registerQtySearch[kind]||"")+'" placeholder="مثال: 60.9" oninput="ui.registerQtySearch[\''+kind+'\']=this.value; updateRegisterBody(\''+kind+'\');"/></div>' +
   '</div>';
+  html += '<div id="register-body-'+kind+'">' + renderRegisterBody(kind) + '</div>';
+  return html;
+}
+/* يُعيد رسم جزء "نتائج الفلاتر" فقط (الأزرار + التحليل + الجدول) داخل
+   حاوية register-body، بدل إعادة رسم الصفحة كاملة — عشان مربعات البحث
+   بالاسم والكمية متفقدش التركيز (focus) مع كل حرف يُكتب فيها */
+function updateRegisterBody(kind){
+  const el = byId("register-body-"+kind);
+  if(el) el.innerHTML = renderRegisterBody(kind);
+}
+function renderRegisterBody(kind){
+  const isSales = kind==="sales";
+  const partyKind = isSales?"customers":"suppliers";
+  const partyField = isSales?"customerId":"supplierId";
+  const crossKind = isSales?"suppliers":"customers";
+  const crossLabel = isSales?"المورد":"العميل";
+  const parties = DB[partyKind];
+  const crossParties = DB[crossKind];
+  let list = DB[kind].slice().sort((a,b)=> a.date<b.date?1:-1);
+  let html = "";
+
   if(ui.registerFilterFrom) list = list.filter(r=>r.date>=ui.registerFilterFrom);
   if(ui.registerFilterTo) list = list.filter(r=>r.date<=ui.registerFilterTo);
   if(ui.registerDayFilter[kind]) list = list.filter(r=>r.date===ui.registerDayFilter[kind]);
@@ -3913,12 +4004,20 @@ function renderRegister(kind){
     const term = ui.registerSearch[kind].trim();
     list = list.filter(r=>{
       const party = parties.find(p=>p.id===r[partyField]);
-      return party && party.name.indexOf(term)!==-1;
+      return party && party.name.trim()===term;
     });
   }
   if(ui.registerQtySearch[kind] && ui.registerQtySearch[kind].trim()){
     const qterm = ui.registerQtySearch[kind].trim();
-    list = list.filter(r=> String(r.quantity!=null?r.quantity:"").indexOf(qterm)!==-1);
+    const qtermNum = Number(qterm);
+    list = list.filter(r=>{
+      const rq = r.quantity!=null ? r.quantity : "";
+      if(qterm!=="" && !isNaN(qtermNum)) return Number(rq)===qtermNum;
+      return String(rq).trim()===qterm;
+    });
+  }
+  if(ui.registerFilterFrom||ui.registerFilterTo||ui.registerDayFilter[kind]||ui.registerTypeFilter[kind]!=="all"||ui.registerSearch[kind]||ui.registerQtySearch[kind]){
+    html += '<div style="margin:-4px 0 14px;"><button class="btn btn-ghost btn-sm" onclick="ui.registerFilterFrom=\'\'; ui.registerFilterTo=\'\'; ui.registerDayFilter[\''+kind+'\']=\'\'; ui.registerTypeFilter[\''+kind+'\']=\'all\'; ui.registerSearch[\''+kind+'\']=\'\'; ui.registerQtySearch[\''+kind+'\']=\'\'; render();">✕ مسح الفلاتر</button></div>';
   }
 
   // ---- تحليل سريع حسب نوع العملية (نقل / توريد) ----
@@ -3934,6 +4033,7 @@ function renderRegister(kind){
   '</div>';
 
   html += '<div class="form-panel" style="margin-bottom:14px;">' +
+
     '<div style="font-weight:800; font-size:13px; margin-bottom:10px;">🖨️ خيارات طباعة الكشف</div>' +
     '<div class="form-grid cols-3">' +
       '<div><label class="f-label">ثيم الطباعة</label><select class="f-input" id="reg-print-theme">' +
@@ -4423,6 +4523,147 @@ function deleteRegisterRecord(kind, id, skipConfirm){
   recomputeCOGS();
   logActivity("حذف عملية "+(kind==="sales"?"بيع":"شراء"), "");
   saveDB(); render();
+}
+/* ---- تصدير كشف المبيعات/المشتريات كاملًا إلى إكسيل ---- */
+function exportRegisterExcel(kind){
+  if(!ensureExcelLib()) return;
+  const isSales = kind==="sales";
+  const partyField = isSales?"customerId":"supplierId";
+  const parties = DB[isSales?"customers":"suppliers"];
+  const crossParties = DB[isSales?"suppliers":"customers"];
+  const opLabel = {transport:"نقل", supply:"توريد"};
+  const header = ["التاريخ","اسم "+(isSales?"العميل":"المورد"),"نوع العملية","الكمية","سعر الوحدة","المبلغ المسدد",
+    "مصنع التحميل","مكان التعتيق","اسم السائق","رقم الرحلة","اسم الجهة المرتبطة",
+    "كود الحساب الرئيسي","كود حساب السداد","كود حساب "+(isSales?"العملاء":"الموردين")+" الآجل"]
+    .concat(isSales ? ["كود حساب المخزون"] : []);
+  const data = [header];
+  DB[kind].slice().sort((a,b)=> a.date<b.date?1:-1).forEach(r=>{
+    const party = parties.find(p=>p.id===r[partyField]);
+    const crossParty = crossParties.find(p=>p.id===r.crossPartyId);
+    const mainAcc = DB.accounts.find(a=>a.id===r.mainAccountId);
+    const payAcc = DB.accounts.find(a=>a.id===r.paymentAccountId);
+    const defAcc = DB.accounts.find(a=>a.id===r.deferredAccountId);
+    const invAcc = DB.accounts.find(a=>a.id===r.inventoryAccountId);
+    const row = [
+      r.date||"", party?party.name:"", opLabel[r.operationType]||"",
+      r.quantity!=null?r.quantity:"", r.unitPrice!=null?r.unitPrice:"", r.paid!=null?r.paid:"",
+      r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.tripNumber||"",
+      crossParty?crossParty.name:"",
+      mainAcc?mainAcc.code:"", payAcc?payAcc.code:"", defAcc?defAcc.code:"",
+    ];
+    if(isSales) row.push(invAcc?invAcc.code:"");
+    data.push(row);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, isSales?"المبيعات":"المشتريات");
+  downloadWorkbook(wb, (isSales?"كشف_المبيعات":"كشف_المشتريات")+"_"+todayISO()+".xlsx");
+}
+/* ---- تحويل خلية تاريخ من إكسيل (نص أو تاريخ حقيقي) إلى صيغة YYYY-MM-DD ---- */
+function excelCellToISODate(val){
+  if(val instanceof Date && !isNaN(val)){
+    const y=val.getUTCFullYear(), m=String(val.getUTCMonth()+1).padStart(2,"0"), d=String(val.getUTCDate()).padStart(2,"0");
+    return y+"-"+m+"-"+d;
+  }
+  const s = String(val||"").trim();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if(m) return m[3]+"-"+String(m[2]).padStart(2,"0")+"-"+String(m[1]).padStart(2,"0");
+  return s;
+}
+/* ---- استيراد كشف المبيعات/المشتريات من إكسيل (يُنشئ عملاء/موردين جددًا
+   عند الحاجة، ويُنشئ القيود المحاسبية تلقائيًا لكل صف مثل الإدخال اليدوي) ---- */
+function importRegisterExcel(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  if(!ensureExcelLib()){ event.target.value = ""; return; }
+  const kind = ui.registerImportKind || "sales";
+  if(!canEditTab(kind==="sales"?"salesReg":"purchases")){
+    alert("⛔ ليس لديك صلاحية التعديل في هذا القسم.");
+    event.target.value = ""; return;
+  }
+  const isSales = kind==="sales";
+  const partyField = isSales?"customerId":"supplierId";
+  const partyKind = isSales?"customers":"suppliers";
+  const crossKind = isSales?"suppliers":"customers";
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:"array", cellDates:true});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+      const mainAccounts = isSales
+        ? DB.accounts.filter(a=>a.type==="revenue")
+        : DB.accounts.filter(a=> (a.type==="expense"||a.type==="asset") && !["10001","10002","10003","10006","20001"].includes(a.code));
+      const cashAccounts = DB.accounts.filter(a=> a.type==="asset" && a.normal==="debit");
+      const deferredDefault = isSales
+        ? (DB.accounts.find(a=>a.code==="10003")||DB.accounts.find(a=>a.type==="asset"&&a.name.includes("عملاء")))
+        : (DB.accounts.find(a=>a.code==="20001")||DB.accounts.find(a=>a.type==="liability"&&a.name.includes("مورد")));
+      const opMap = {"نقل":"transport", "توريد":"supply"};
+
+      let added=0, skipped=0, lockedSkipped=0;
+      rows.forEach((row,i)=>{
+        if(i===0) return; // تجاهل صف العناوين
+        const partyName = String(row[1]||"").trim();
+        if(!partyName){ skipped++; return; }
+        const date = excelCellToISODate(row[0]);
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ skipped++; return; }
+        const quantity = Number(row[3]);
+        const unitPrice = Number(row[4]);
+        if(!quantity || !unitPrice){ skipped++; return; }
+        if(isDateLocked(date)){ lockedSkipped++; return; }
+
+        let party = DB[partyKind].find(p=>p.name.trim()===partyName);
+        if(!party){ party = {id:uid("p"), name:partyName, phone:"", address:"", bankName:"", bankAccountNumber:""}; if(isSales) party.creditLimit=""; DB[partyKind].push(party); }
+
+        const opType = opMap[String(row[2]||"").trim()] || "";
+        const paid = Number(row[5])||0;
+        const amount = quantity*unitPrice;
+        const remain = Math.max(amount-paid, 0);
+        const crossName = String(row[10]||"").trim();
+        const crossParty = crossName ? DB[crossKind].find(p=>p.name.trim()===crossName) : null;
+
+        const mainCode = String(row[11]||"").trim();
+        const payCode = String(row[12]||"").trim();
+        const defCode = String(row[13]||"").trim();
+        const invCode = isSales ? String(row[14]||"").trim() : "";
+        const mainAccount = (mainCode && DB.accounts.find(a=>a.code===mainCode)) || mainAccounts[0];
+        const paymentAccount = (payCode && DB.accounts.find(a=>a.code===payCode)) || (paid>0 ? cashAccounts[0] : null);
+        const deferredAccount = (defCode && DB.accounts.find(a=>a.code===defCode)) || (remain>0 ? deferredDefault : null);
+        const inventoryAccount = invCode ? DB.accounts.find(a=>a.code===invCode) : null;
+        if(!mainAccount){ skipped++; return; }
+
+        const payload = {
+          id: uid(isSales?"sl":"pu"), date, [partyField]: party.id, operationType: opType,
+          loadingFactory: String(row[6]||"").trim(), unloadingLocation: String(row[7]||"").trim(),
+          driverName: String(row[8]||"").trim(), tripNumber: String(row[9]||"").trim(),
+          quantity: String(quantity), unitPrice: String(unitPrice), paid: String(paid), amount,
+          mainAccountId: mainAccount.id,
+          paymentAccountId: paymentAccount?paymentAccount.id:"",
+          deferredAccountId: deferredAccount?deferredAccount.id:"",
+          inventoryAccountId: isSales && inventoryAccount ? inventoryAccount.id : "",
+          linkedPurchaseIds: [], linkedPurchaseId: "",
+          crossPartyId: crossParty?crossParty.id:"",
+        };
+        DB[kind].push(payload);
+        upsertRegisterEntry(payload, isSales, party.name);
+        added++;
+      });
+
+      recomputeCOGS();
+      logActivity("استيراد "+(isSales?"مبيعات":"مشتريات")+" من إكسيل", "إضافة: "+added);
+      saveDB(); render();
+      alert("تم الاستيراد بنجاح ✅\nإضافة "+added+" عملية"+
+        (skipped?("، وتجاهل "+skipped+" صف (بيانات ناقصة أو غير صحيحة)"):"")+
+        (lockedSkipped?("، وتجاهل "+lockedSkipped+" صف بتاريخ يقع في فترة مقفلة"):"")+".");
+    }catch(err){
+      alert("تعذّرت قراءة ملف الإكسيل. تأكد أن الملف بصيغة xlsx/xls صحيحة وبنفس ترتيب الأعمدة الموضح أعلى الجدول.");
+    }
+    event.target.value = "";
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 /* ======================================================================
@@ -5070,16 +5311,37 @@ function computeCustodyStats(r){
 function renderCustodyRecordsTab(){
   let html = '<div style="margin-bottom:12px;"><button class="btn btn-primary" onclick="openCustodyForm()">➕ نقلة / سجل عهدة جديد</button></div>';
   if(ui.custodyForm) html += renderCustodyForm();
-  const list = (DB.custodyRecords||[]).slice().sort((a,b)=> (a.tripDate||a.departDate||"")<(b.tripDate||b.departDate||"")?1:-1);
-  html += '<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>البيان</th><th>تباع السائق</th><th class="tleft">الكمية</th><th class="tleft">العهدة</th><th class="tleft">الكمسيون</th><th class="tleft">المصاريف</th><th class="tleft">المتبقي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
-  if(list.length===0){ html += '<tr><td colspan="9"><div class="empty-row">لا توجد سجلات نقلات بعد</div></td></tr>'; }
+
+  ui.custodyFilter = ui.custodyFilter || {driverId:"", from:"", to:"", month:""};
+  const usedDriverIds = new Set((DB.custodyRecords||[]).map(r=>r.driverId).filter(Boolean));
+  const filterDrivers = DB.drivers.filter(d=>usedDriverIds.has(d.id));
+  html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
+    '<div style="width:180px;"><label class="f-label">فلترة باسم السائق</label><select class="f-input" onchange="ui.custodyFilter.driverId=this.value; render();">' +
+      '<option value="">الكل</option>' +
+      filterDrivers.map(d=>'<option value="'+d.id+'" '+(ui.custodyFilter.driverId===d.id?"selected":"")+'>'+esc(d.name)+'</option>').join("") +
+    '</select></div>' +
+    '<div style="width:150px;"><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(ui.custodyFilter.from)+'" onchange="ui.custodyFilter.from=this.value; render();"/></div>' +
+    '<div style="width:150px;"><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(ui.custodyFilter.to)+'" onchange="ui.custodyFilter.to=this.value; render();"/></div>' +
+    '<div style="width:150px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(ui.custodyFilter.month)+'" onchange="ui.custodyFilter.month=this.value; render();"/></div>' +
+    ((ui.custodyFilter.driverId||ui.custodyFilter.from||ui.custodyFilter.to||ui.custodyFilter.month) ? '<button class="btn btn-ghost btn-sm" onclick="ui.custodyFilter={driverId:\'\',from:\'\',to:\'\',month:\'\'}; render();">✕ مسح الفلاتر</button>' : '') +
+  '</div>';
+
+  let list = (DB.custodyRecords||[]).slice().sort((a,b)=> (a.tripDate||a.departDate||"")<(b.tripDate||b.departDate||"")?1:-1);
+  if(ui.custodyFilter.driverId) list = list.filter(r=>r.driverId===ui.custodyFilter.driverId);
+  if(ui.custodyFilter.from) list = list.filter(r=> (r.tripDate||r.departDate||"")>=ui.custodyFilter.from);
+  if(ui.custodyFilter.to) list = list.filter(r=> (r.tripDate||r.departDate||"")<=ui.custodyFilter.to);
+  if(ui.custodyFilter.month) list = list.filter(r=> String(r.tripDate||r.departDate||"").slice(0,7)===ui.custodyFilter.month);
+
+  html += '<div class="table-wrap"><table><thead><tr><th>التاريخ</th><th>السائق</th><th>البيان</th><th>تباع السائق</th><th class="tleft">الكمية</th><th class="tleft">العهدة</th><th class="tleft">الكمسيون</th><th class="tleft">المصاريف</th><th class="tleft">المتبقي</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+  if(list.length===0){ html += '<tr><td colspan="10"><div class="empty-row">لا توجد سجلات نقلات مطابقة</div></td></tr>'; }
   let totalCustody=0, totalExpenses=0, totalCommission=0, totalRemaining=0;
   list.forEach(r=>{
     const driver = DB.drivers.find(d=>d.id===r.driverId);
     const stats = computeCustodyStats(r);
     totalCustody += Number(r.custodyAmount)||0; totalExpenses += Number(r.expenses)||0; totalCommission += Number(r.commission)||0; totalRemaining += stats.remaining;
     html += '<tr><td style="white-space:nowrap;">'+fmtDate(r.tripDate||r.departDate)+'</td>' +
-      '<td>'+esc(r.description||"—")+' <span style="color:var(--stone-400); font-size:11px;">('+esc(driver?driver.name:"—")+')</span></td>' +
+      '<td style="font-weight:600;">'+esc(driver?driver.name:"—")+'</td>' +
+      '<td>'+esc(r.description||"—")+'</td>' +
       '<td>'+esc((r.helperId && DB.helpers.find(h=>h.id===r.helperId))?DB.helpers.find(h=>h.id===r.helperId).name:(r.helperName||"—"))+'</td>' +
       '<td class="tleft num">'+(r.quantity!=null&&r.quantity!==""?r.quantity:"—")+'</td>' +
       '<td class="tleft num">'+money(r.custodyAmount)+'</td>' +
@@ -5091,7 +5353,7 @@ function renderCustodyRecordsTab(){
   });
   html += '</tbody>';
   if(list.length>0){
-    html += '<tfoot><tr><td colspan="4">الإجمالي</td><td class="tleft num">'+money(totalCustody)+'</td><td class="tleft num">'+money(totalCommission)+'</td><td class="tleft num">'+money(totalExpenses)+'</td><td class="tleft num">'+money(totalRemaining)+'</td><td></td></tr></tfoot>';
+    html += '<tfoot><tr><td colspan="5">الإجمالي</td><td class="tleft num">'+money(totalCustody)+'</td><td class="tleft num">'+money(totalCommission)+'</td><td class="tleft num">'+money(totalExpenses)+'</td><td class="tleft num">'+money(totalRemaining)+'</td><td></td></tr></tfoot>';
   }
   html += '</table></div>';
   html += '<div class="footer-note">"المتبقي" = العهدة − الكمسيون − المصاريف؛ إذا كان سالبًا فهذا يعني أن السائق صرف أكثر من قيمة عهدته. لحساب عدد أيام العمل والأجر بشكل منفصل استخدم "أيام عمل السائقين" أو "أيام عمل المساعدين" من القائمة أعلاه.</div>';
@@ -5815,7 +6077,20 @@ function renderCheckForm(){
     '</div>' +
   '</div>';
 }
+function syncCheckFormFromDOM(){
+  const f = ui.checkForm;
+  if(!f) return;
+  if(byId("chk-party")) f.partyId = byId("chk-party").value;
+  if(byId("chk-number")) f.checkNumber = byId("chk-number").value;
+  if(byId("chk-bank")) f.bankName = byId("chk-bank").value;
+  if(byId("chk-due")) f.dueDate = byId("chk-due").value;
+  if(byId("chk-amount")) f.amount = byId("chk-amount").value;
+  if(byId("chk-notes")) f.notes = byId("chk-notes").value;
+}
 function checkDirectionChanged(){
+  syncCheckFormFromDOM();
+  ui.checkForm.direction = byId("chk-direction").value;
+  ui.checkForm.partyId = ""; // قائمة الجهات بتتغير من عملاء لموردين أو العكس
   render();
 }
 function saveCheckForm(){
@@ -6882,10 +7157,32 @@ function buildBalanceMessage(customer, balance){
     .replace(/\{company\}/g, "الفردوس للنقل والتوريد")
     .replace(/\{date\}/g, fmtDate(todayISO()));
 }
+/* لو العميل مورد أيضًا (مربوط يدويًا عبر "الجهة المرتبطة"، أو بنفس
+   الاسم بالضبط)، نرجّع المورد المطابق عشان نحسب صافي الرصيد بدل رصيد
+   العميل وحده */
+function findMatchingSupplierForCustomer(customer){
+  if(!customer) return null;
+  if(customer.linkedPartyId){
+    const s = DB.suppliers.find(x=>x.id===customer.linkedPartyId);
+    if(s) return s;
+  }
+  return DB.suppliers.find(s=> s.name.trim()===customer.name.trim()) || null;
+}
+/* صافي الرصيد لعميل: المستحق لنا منه (كعميل) ناقص المستحق له علينا
+   (كمورد) لو كان نفس الاسم عميلاً وموردًا معًا */
+function customerNetBalance(customerId){
+  const c = DB.customers.find(x=>x.id===customerId);
+  if(!c) return 0;
+  const custBal = partyBalance("customers", c.id);
+  const sup = findMatchingSupplierForCustomer(c);
+  const supBal = sup ? partyBalance("suppliers", sup.id) : 0;
+  return custBal - supBal;
+}
 function sendBalanceWhatsApp(customerId){
   const c = DB.customers.find(x=>x.id===customerId);
   if(!c) return;
-  const balance = partyBalance("customers", customerId);
+  const balance = customerNetBalance(customerId);
+  if(balance<=0.001){ alert("بعد خصم رصيد المورد المرتبط (لو وُجد)، لا يوجد صافي رصيد مستحق لهذا العميل حاليًا."); return; }
   const phone = normalizePhoneForWhatsApp(c.phone);
   if(!phone){ alert("لا يوجد رقم هاتف صالح مسجل لهذا العميل. أضف رقمه أولاً من صفحة العملاء."); return; }
   const message = buildBalanceMessage(c, balance);
@@ -6902,7 +7199,7 @@ function saveWaTemplate(){
 function renderWhatsAppBalances(){
   let html = sectionHead("📱","إرسال الأرصدة عبر واتساب","أرسل تذكيرًا بالرصيد المستحق لأي عميل بضغطة واحدة");
 
-  html += '<div class="alert" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e;">ℹ️ واتساب لا يسمح بإرسال رسائل تلقائيًا بدون تدخل بشري (لحماية المستخدمين من السبام). هذه الأداة تجهّز الرسالة وتفتح واتساب جاهزة للإرسال — تحتاج فقط لضغطة "إرسال" الأخيرة داخل واتساب نفسه. للإرسال اليومي: افتح هذه الصفحة كل يوم واضغط 📱 لكل عميل يحتاج تذكيرًا.</div>';
+  html += '<div class="alert" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e;">ℹ️ واتساب لا يسمح بإرسال رسائل تلقائيًا بدون تدخل بشري (لحماية المستخدمين من السبام). هذه الأداة تجهّز الرسالة وتفتح واتساب جاهزة للإرسال — تحتاج فقط لضغطة "إرسال" الأخيرة داخل واتساب نفسه. للإرسال اليومي: افتح هذه الصفحة كل يوم واضغط 📱 لكل عميل يحتاج تذكيرًا. لو العميل مورد أيضًا لنفس الجهة (مربوط أو بنفس الاسم)، الرصيد المعروض هنا هو صافي الرصيد (المستحق لنا منه ناقص المستحق له علينا).</div>';
 
   const tpl = loadWaTemplate();
   html += '<div class="form-panel">' +
@@ -6911,7 +7208,7 @@ function renderWhatsAppBalances(){
     '<div class="form-actions"><button class="btn btn-primary" onclick="saveWaTemplate()">✔ حفظ نص الرسالة</button></div>' +
   '</div>';
 
-  const rows = DB.customers.map(c=>({customer:c, balance:partyBalance("customers", c.id)}))
+  const rows = DB.customers.map(c=>({customer:c, balance:customerNetBalance(c.id)}))
     .filter(r=>r.balance>0.001)
     .sort((a,b)=>b.balance-a.balance);
   const today = todayISO();
@@ -7680,6 +7977,7 @@ function consolidatedRows(kind){
 function renderConsolidated(){
   const kind = ui.consolidatedKind;
   if(kind==="both") return renderConsolidatedBoth();
+  if(kind==="netByName") return renderNetBalanceByName();
   const isCustomers = kind==="customers";
   let html = sectionHead("📋","كشف مجمع الأرصدة","عرض إجمالي أرصدة كل العملاء أو الموردين دفعة واحدة — المستحق عليهم والمستحق لهم",
     '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
@@ -7693,6 +7991,7 @@ function renderConsolidated(){
       '<option value="customers" '+(isCustomers?"selected":"")+'>العملاء</option>' +
       '<option value="suppliers" '+(!isCustomers?"selected":"")+'>الموردون</option>' +
       '<option value="both">العملاء والموردون معًا (كشف واحد + تحليلات)</option>' +
+      '<option value="netByName">الاسم وصافي الرصيد (دمج تلقائي)</option>' +
     '</select></div>';
 
   const rows = consolidatedRows(kind);
@@ -7751,6 +8050,7 @@ function renderConsolidatedBoth(){
       '<option value="customers">العملاء</option>' +
       '<option value="suppliers">الموردون</option>' +
       '<option value="both" selected>العملاء والموردون معًا (كشف واحد + تحليلات)</option>' +
+      '<option value="netByName">الاسم وصافي الرصيد (دمج تلقائي)</option>' +
     '</select></div>';
 
   const custRows = consolidatedRows("customers").map(r=>Object.assign({kind:"customers"}, r));
@@ -7932,6 +8232,130 @@ function exportConsolidatedExcel(){
   XLSX.utils.book_append_sheet(wb, ws, "كشف مجمع");
   downloadWorkbook(wb, "كشف مجمع " + (isCustomers?"العملاء":"الموردين") + ".xlsx");
 }
+/* ---- كشف مبسّط: الاسم + صافي الرصيد فقط — يدمج تلقائيًا اسم العميل
+   مع اسم المورد لو كانا نفس الجهة (بالربط اليدوي linkedPartyId إن وُجد،
+   وإلا بمطابقة الاسم بالضبط)، فيطلع صف واحد للاسم بصافي رصيده (المستحق
+   لنا ناقص المستحق علينا) بدل صفين منفصلين ---- */
+function buildNetBalanceRows(){
+  const customers = DB.customers.filter(p=>!p.hiddenFromReports);
+  const suppliers = DB.suppliers.filter(p=>!p.hiddenFromReports);
+  const usedSupplierIds = new Set();
+  const rows = [];
+  customers.forEach(c=>{
+    let matchedSupplier = c.linkedPartyId ? suppliers.find(s=>s.id===c.linkedPartyId) : null;
+    if(!matchedSupplier){
+      matchedSupplier = suppliers.find(s=> !usedSupplierIds.has(s.id) && s.name.trim()===c.name.trim()) || null;
+    }
+    const custBal = partyBalance("customers", c.id);
+    let supBal = 0;
+    if(matchedSupplier){
+      usedSupplierIds.add(matchedSupplier.id);
+      supBal = partyBalance("suppliers", matchedSupplier.id);
+    }
+    rows.push({ name: c.name, net: custBal - supBal, customerId: c.id, supplierId: matchedSupplier ? matchedSupplier.id : null });
+  });
+  suppliers.forEach(s=>{
+    if(usedSupplierIds.has(s.id)) return;
+    rows.push({ name: s.name, net: -partyBalance("suppliers", s.id), customerId: null, supplierId: s.id });
+  });
+  return rows.sort((a,b)=> Math.abs(b.net)-Math.abs(a.net));
+}
+function netBalanceStatus(net){
+  if(Math.abs(net)<=0.001) return {text:"متسوٍّ", color:"#059669"};
+  return net>0 ? {text:"مستحق لنا", color:"#e11d48"} : {text:"مستحق علينا", color:"#d97706"};
+}
+function renderNetBalanceByName(){
+  const rows = buildNetBalanceRows();
+  let html = sectionHead("📋","كشف الاسم وصافي الرصيد",
+    "قائمة بكل الأسماء (عملاء وموردين) وصافي الرصيد لكل اسم — لو الاسم عميل ومورد معًا في نفس الوقت يظهر صف واحد بصافي المستحق لنا ناقص المستحق علينا",
+    '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<button class="btn btn-primary" onclick="printNetBalanceByName()">🖨️ طباعة</button>' +
+      '<button class="btn btn-ghost" onclick="exportNetBalanceExcel()">📊 تصدير إكسيل</button>' +
+    '</div>');
+
+  html += '<div style="width:220px; max-width:100%; margin-bottom:16px;"><label class="f-label">عرض كشف</label>' +
+    '<select class="f-input" onchange="ui.consolidatedKind=this.value; render();">' +
+      '<option value="customers">العملاء</option>' +
+      '<option value="suppliers">الموردون</option>' +
+      '<option value="both">العملاء والموردون معًا (كشف واحد + تحليلات)</option>' +
+      '<option value="netByName" selected>الاسم وصافي الرصيد (دمج تلقائي)</option>' +
+    '</select></div>';
+
+  const totalFavor = rows.filter(r=>r.net>0.001).reduce((s,r)=>s+r.net,0);
+  const totalAgainst = rows.filter(r=>r.net<-0.001).reduce((s,r)=>s+Math.abs(r.net),0);
+  const net = totalFavor - totalAgainst;
+  html += '<div class="cards-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));">' +
+    card("عدد الأسماء", String(rows.length), "", "slate") +
+    card("إجمالي مستحق لنا", money(totalFavor), "", "teal") +
+    card("إجمالي مستحق علينا", money(totalAgainst), "", "amber") +
+    card("الصافي الكلي", money(Math.abs(net)), net>=0?"لصالح الشركة":"عليها التزامات أكثر", net>=0?"emerald":"rose") +
+  '</div>';
+
+  html += '<div class="table-wrap"><table><thead><tr><th>الاسم</th><th class="tleft">المبلغ (صافي الرصيد)</th><th class="tleft">الحالة</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+  if(rows.length===0){
+    html += '<tr><td colspan="4"><div class="empty-row">لا توجد بيانات بعد</div></td></tr>';
+  }
+  rows.forEach(r=>{
+    const st = netBalanceStatus(r.net);
+    html += '<tr><td style="font-weight:600;">'+esc(r.name)+'</td>' +
+      '<td class="tleft num" style="font-weight:700; color:'+st.color+';">'+money(Math.abs(r.net))+'</td>' +
+      '<td class="tleft" style="color:'+st.color+'; font-weight:600;">'+st.text+'</td>' +
+      '<td class="tleft">' +
+        (r.customerId ? '<button class="icon-btn" onclick="goToStatement(\'customers\',\''+r.customerId+'\')" title="كشف حساب كعميل">🖨️👥</button>' : '') +
+        (r.supplierId ? '<button class="icon-btn" onclick="goToStatement(\'suppliers\',\''+r.supplierId+'\')" title="كشف حساب كمورد">🖨️🚚</button>' : '') +
+      '</td>' +
+    '</tr>';
+  });
+  html += '</tbody><tfoot><tr><td>الإجمالي</td><td class="tleft num">'+money(Math.abs(net))+'</td><td colspan="2"></td></tr></tfoot></table></div>';
+  return html;
+}
+function printNetBalanceByName(){
+  const rows = buildNetBalanceRows();
+  const totalFavor = rows.filter(r=>r.net>0.001).reduce((s,r)=>s+r.net,0);
+  const totalAgainst = rows.filter(r=>r.net<-0.001).reduce((s,r)=>s+Math.abs(r.net),0);
+  let rowsHtml = "";
+  rows.forEach(r=>{
+    const st = netBalanceStatus(r.net);
+    rowsHtml += '<tr><td>'+esc(r.name)+'</td><td class="tleft">'+money(Math.abs(r.net))+'</td><td class="tleft">'+st.text+'</td></tr>';
+  });
+  const company = loadCompanyInfo();
+  const html =
+    '<div class="print-doc">' +
+      printHeadHtml(company, "كشف الاسم وصافي الرصيد", "NET-"+todayISO().replace(/-/g,"")) +
+      '<table class="print-table"><thead><tr><th>الاسم</th><th class="tleft">المبلغ (صافي الرصيد)</th><th class="tleft">الحالة</th></tr></thead><tbody>'+rowsHtml+'</tbody></table>' +
+      '<div class="print-row" style="margin-top:14px;"><span>إجمالي مستحق لنا:</span><b>'+money(totalFavor)+' ج.م</b></div>' +
+      '<div class="print-row"><span>إجمالي مستحق علينا:</span><b>'+money(totalAgainst)+' ج.م</b></div>' +
+      '<div class="print-row" style="border-top:1px solid #cbd5e1; padding-top:6px; margin-top:6px;"><span><b>الصافي الكلي:</b></span><b>'+money(Math.abs(totalFavor-totalAgainst))+' ج.م</b></div>' +
+      printSignHtml("اعتماد الإدارة") +
+    '</div>';
+  openPrintArea(html);
+}
+function exportNetBalanceExcel(){
+  if(!ensureExcelLib()) return;
+  const rows = buildNetBalanceRows();
+  const totalFavor = rows.filter(r=>r.net>0.001).reduce((s,r)=>s+r.net,0);
+  const totalAgainst = rows.filter(r=>r.net<-0.001).reduce((s,r)=>s+Math.abs(r.net),0);
+  const data = [
+    ["الفردوس للنقل والتوريد"],
+    ["كشف الاسم وصافي الرصيد"],
+    ["تاريخ التصدير: " + fmtDate(todayISO())],
+    [],
+    ["الاسم","المبلغ (صافي الرصيد)","الحالة"],
+  ];
+  rows.forEach(r=>{
+    const st = netBalanceStatus(r.net);
+    data.push([r.name, Math.abs(r.net), st.text]);
+  });
+  data.push([]);
+  data.push(["إجمالي مستحق لنا","",totalFavor]);
+  data.push(["إجمالي مستحق علينا","",totalAgainst]);
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws["!cols"] = [{wch:26},{wch:18},{wch:16}];
+  ws["!views"] = [{RTL:true}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "الاسم وصافي الرصيد");
+  downloadWorkbook(wb, "كشف الاسم وصافي الرصيد_"+todayISO()+".xlsx");
+}
 
 /* ======================================================================
    11) سندات القبض والصرف (مرتبطة تلقائيًا بقيود اليومية والعملاء/الموردين)
@@ -7939,7 +8363,8 @@ function exportConsolidatedExcel(){
 function renderVouchers(type){
   const isReceipt = type==="receipt";
   const key = isReceipt ? "receipts" : "payments";
-  const list = (DB[key]||[]).slice().sort((a,b)=> a.date<b.date?1:-1);
+  ui.voucherFilter = ui.voucherFilter || {};
+  ui.voucherFilter[key] = ui.voucherFilter[key] || {from:"", to:"", month:"", search:""};
 
   let html = sectionHead(
     isReceipt?"🧾":"💳", isReceipt?"سندات القبض":"سندات الصرف",
@@ -7949,9 +8374,45 @@ function renderVouchers(type){
 
   if(ui.voucherForm && ui.voucherForm.type===type) html += renderVoucherForm(type);
 
+  const filt = ui.voucherFilter[key];
+  html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
+    '<div style="width:150px;"><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(filt.from)+'" onchange="ui.voucherFilter[\''+key+'\'].from=this.value; updateVouchersBody(\''+type+'\');"/></div>' +
+    '<div style="width:150px;"><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(filt.to)+'" onchange="ui.voucherFilter[\''+key+'\'].to=this.value; updateVouchersBody(\''+type+'\');"/></div>' +
+    '<div style="width:150px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(filt.month)+'" onchange="ui.voucherFilter[\''+key+'\'].month=this.value; updateVouchersBody(\''+type+'\');"/></div>' +
+    '<div style="width:220px;"><label class="f-label">🔍 بحث (الجهة/البيان/الرقم)</label><input class="f-input" value="'+esc(filt.search)+'" placeholder="اكتب اسم الجهة أو البيان أو رقم السند" oninput="ui.voucherFilter[\''+key+'\'].search=this.value; updateVouchersBody(\''+type+'\');"/></div>' +
+  '</div>';
+
+  html += '<div id="vouchers-body-'+key+'">' + renderVouchersBody(type) + '</div>';
+  return html;
+}
+function updateVouchersBody(type){
+  const key = type==="receipt" ? "receipts" : "payments";
+  const el = byId("vouchers-body-"+key);
+  if(el) el.innerHTML = renderVouchersBody(type);
+}
+function renderVouchersBody(type){
+  const isReceipt = type==="receipt";
+  const key = isReceipt ? "receipts" : "payments";
+  const filt = (ui.voucherFilter && ui.voucherFilter[key]) || {from:"",to:"",month:"",search:""};
+  let list = (DB[key]||[]).slice().sort((a,b)=> a.date<b.date?1:-1);
+  if(filt.from) list = list.filter(r=>r.date>=filt.from);
+  if(filt.to) list = list.filter(r=>r.date<=filt.to);
+  if(filt.month) list = list.filter(r=> String(r.date||"").slice(0,7)===filt.month);
+  if(filt.search && filt.search.trim()){
+    const term = filt.search.trim().toLowerCase();
+    list = list.filter(r=>
+      String(r.partyName||"").toLowerCase().indexOf(term)!==-1 ||
+      String(r.description||"").toLowerCase().indexOf(term)!==-1 ||
+      String(r.number||"").toLowerCase().indexOf(term)!==-1
+    );
+  }
+  let html = "";
+  if(filt.from||filt.to||filt.month||filt.search){
+    html += '<div style="margin:-4px 0 14px;"><button class="btn btn-ghost btn-sm" onclick="ui.voucherFilter[\''+key+'\']={from:\'\',to:\'\',month:\'\',search:\'\'}; render();">✕ مسح الفلاتر</button></div>';
+  }
   html += '<div class="table-wrap"><table><thead><tr><th>رقم</th><th>التاريخ</th><th>الجهة</th><th>البيان</th><th class="tleft">المبلغ</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
   if(list.length===0){
-    html += '<tr><td colspan="6"><div class="empty-row">لا توجد سندات مسجلة بعد</div></td></tr>';
+    html += '<tr><td colspan="6"><div class="empty-row">لا توجد سندات مطابقة</div></td></tr>';
   }
   let total = 0;
   list.forEach(r=>{
@@ -7964,6 +8425,7 @@ function renderVouchers(type){
       '<td class="tleft">' +
         '<button class="icon-btn" onclick="printVoucher(\''+type+'\',\''+r.id+'\')" title="طباعة">🖨️</button>' +
         '<button class="icon-btn" onclick="printThermalReceipt(\'voucher\',\''+type+'\',\''+r.id+'\')" title="طباعة إيصال حراري صغير">🧾</button>' +
+        '<button class="icon-btn" onclick="duplicateVoucher(\''+type+'\',\''+r.id+'\')" title="نسخة متكررة — سند جديد بنفس البيانات">🔁</button>' +
         '<button class="icon-btn" onclick="openVoucherForm(\''+type+'\',\''+r.id+'\')">✏️</button>' +
         '<button class="icon-btn danger" onclick="deleteVoucherRecord(\''+type+'\',\''+r.id+'\')">🗑️</button>' +
       '</td></tr>';
@@ -7974,6 +8436,17 @@ function renderVouchers(type){
   }
   html += '</table></div>';
   return html;
+}
+/* نسخة متكررة: سند جديد برقم وتاريخ اليوم لكنه مُعبّأ بنفس بيانات سند
+   قديم (الجهة، البيان، المبلغ، الحسابات) — مفيد للسندات الشهرية المتكررة
+   مثل الإيجار أو الرواتب؛ يفتح النموذج للمراجعة قبل الحفظ */
+function duplicateVoucher(type, id){
+  if(!canEditTab((type==="receipt"?"receipts":"payments"))){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const key = type==="receipt" ? "receipts" : "payments";
+  const src = DB[key].find(x=>x.id===id);
+  if(!src) return;
+  ui.voucherForm = Object.assign({}, src, { type, id:null, number: nextVoucherNumber(type), date: todayISO() });
+  render();
 }
 function renderVoucherForm(type){
   const f = ui.voucherForm;
@@ -8932,7 +9405,34 @@ function deleteBatchPermanently(batchId){
 }
 function renderTrashBin(){
   let html = sectionHead("🗑️","سلة المحذوفات","العناصر المحذوفة (قيود، حسابات، عملاء وموردون، مبيعات ومشتريات، سندات، شيكات، سائقون ومساعدون، مركبات) تُحفظ هنا مؤقتًا ويمكن استرجاعها بدل إعادة إدخالها من جديد");
-  const list = (DB.trash||[]).slice().sort((a,b)=> a.deletedAt<b.deletedAt?1:-1);
+
+  html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
+    '<div style="width:170px;"><label class="f-label">فلترة بالشهر</label><input class="f-input" type="month" value="'+esc(ui.trashFilterMonth||"")+'" onchange="ui.trashFilterMonth=this.value; updateTrashBinBody();"/></div>' +
+    '<div style="width:220px;"><label class="f-label">🔍 بحث بالاسم (الوصف/بواسطة)</label><input class="f-input" value="'+esc(ui.trashSearch||"")+'" placeholder="اكتب اسم العميل/المورد أو المستخدم" oninput="ui.trashSearch=this.value; updateTrashBinBody();"/></div>' +
+  '</div>';
+  html += '<div id="trash-bin-body">' + renderTrashBinBody() + '</div>';
+  return html;
+}
+function updateTrashBinBody(){
+  const el = byId("trash-bin-body");
+  if(el) el.innerHTML = renderTrashBinBody();
+}
+function renderTrashBinBody(){
+  let list = (DB.trash||[]).slice().sort((a,b)=> a.deletedAt<b.deletedAt?1:-1);
+  if(ui.trashFilterMonth){
+    list = list.filter(t=> String(t.deletedAt||"").slice(0,7)===ui.trashFilterMonth);
+  }
+  if(ui.trashSearch && ui.trashSearch.trim()){
+    const term = ui.trashSearch.trim().toLowerCase();
+    list = list.filter(t=>
+      String(t.label||"").toLowerCase().indexOf(term)!==-1 ||
+      String(t.deletedBy||"").toLowerCase().indexOf(term)!==-1
+    );
+  }
+  let html = "";
+  if(ui.trashFilterMonth||ui.trashSearch){
+    html += '<div style="margin:-4px 0 14px;"><button class="btn btn-ghost btn-sm" onclick="ui.trashFilterMonth=\'\'; ui.trashSearch=\'\'; render();">✕ مسح الفلاتر</button></div>';
+  }
 
   // ---- تجميع عمليات الحذف الجماعي (تصفير قوائم) كدفعات ----
   const batches = {};
@@ -8967,7 +9467,7 @@ function renderTrashBin(){
   }
 
   html += '<div class="table-wrap"><table><thead><tr><th>النوع</th><th>الوصف</th><th>تاريخ الحذف</th><th>بواسطة</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
-  if(singles.length===0) html += '<tr><td colspan="5"><div class="empty-row">لا توجد عناصر محذوفة فرديًا</div></td></tr>';
+  if(singles.length===0) html += '<tr><td colspan="5"><div class="empty-row">لا توجد عناصر محذوفة فرديًا مطابقة</div></td></tr>';
   singles.forEach(t=>{
     html += '<tr><td>'+esc(trashKindLabel(t.kind))+'</td><td>'+esc(t.label||"")+'</td><td>'+fmtDate(t.deletedAt.slice(0,10))+'</td><td>'+esc(t.deletedBy||"—")+'</td>' +
       '<td class="tleft"><button class="icon-btn" onclick="restoreFromTrash(\''+t.id+'\')" title="استرجاع">♻️</button>' +
