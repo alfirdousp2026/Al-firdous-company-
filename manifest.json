@@ -7,8 +7,8 @@
   "id": "./index.html",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0f172a",
-  "theme_color": "#0f766e",
+  "background_color": "#0c1a2c",
+  "theme_color": "#15304b",
   "dir": "rtl",
   "lang": "ar",
   "icons": [
