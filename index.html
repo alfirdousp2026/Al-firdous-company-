@@ -7,7 +7,7 @@
 
 <!-- ===== إعدادات تطبيق الهاتف (PWA) ===== -->
 <link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#0f766e" />
+<meta name="theme-color" content="#15304b" />
 <meta name="background-color" content="#0f172a" />
 <link rel="icon" href="icon-192.png" type="image/png" />
 <link rel="apple-touch-icon" href="icon-192.png" />
@@ -201,7 +201,7 @@
   #printArea{display:none;}
   @media print{
     body *{visibility:hidden;}
-    #printArea, #printArea *{visibility:visible;}
+    #printArea, #printArea *{visibility:visible; -webkit-print-color-adjust:exact; print-color-adjust:exact; color-adjust:exact;}
     #printArea{display:block; position:absolute; top:0; left:0; width:100%; padding:24px; background:#fff;}
     #printArea.thermal-print{width:80mm; padding:4mm;}
   }
@@ -223,6 +223,7 @@
   .print-row span{color:#57534e; min-width:150px;}
   .print-table{width:100%; border-collapse:collapse; margin-top:14px; font-size:12.5px;}
   .print-table th, .print-table td{border:1px solid #d6d3d1; padding:6px 8px; text-align:right;}
+  .print-table thead th{background:#0f172a; color:#fff; font-weight:700; border-color:#0f172a;}
   .print-table tfoot td{font-weight:800; border-top:2px solid #0f172a;}
   .print-sign{display:flex; justify-content:space-between; margin-top:60px; font-size:12.5px; gap:10px;}
   .print-sign div{border-top:1px solid #57534e; padding-top:6px; width:150px; text-align:center; line-height:1.7;}
@@ -231,11 +232,12 @@
   /* ثيمات إضافية لكشف الحساب */
   .print-doc.theme-dark .print-head{background:#0f172a; color:#fff; padding:14px; border-radius:8px; border-bottom:none; margin-bottom:16px;}
   .print-doc.theme-dark .print-co-sub, .print-doc.theme-dark .print-doc-num{color:#cbd5e1;}
-  .print-doc.theme-dark .print-table thead th{background:#f1f5f9;}
+  .print-doc.theme-dark .print-table thead th{background:#f1f5f9; color:#0f172a;}
   .print-doc.theme-minimal{font-size:12px;}
   .print-doc.theme-minimal .print-head{border-bottom:1px solid #000; padding-bottom:8px; margin-bottom:10px;}
   .print-doc.theme-minimal .print-co{font-size:15px;}
   .print-doc.theme-minimal .print-table th, .print-doc.theme-minimal .print-table td{border:1px solid #000; padding:4px 6px;}
+  .print-doc.theme-minimal .print-table thead th{background:transparent; color:#000; font-weight:800;}
   .print-doc.theme-minimal .print-row{border-bottom:1px solid #000;}
   .print-doc.theme-formal{border:3px double #0f172a; padding:18px;}
   .print-doc.theme-formal .print-head{border-bottom:3px double #0f172a;}
@@ -388,6 +390,7 @@
         <span id="mobileUserBox"></span>
       </span>
     </div>
+    <div id="storageWarningBanner" style="padding:0 16px;"></div>
     <div class="content-wrap" id="content"></div>
   </main>
 
@@ -660,6 +663,35 @@ function loadDB(){
   return JSON.parse(JSON.stringify(emptyDB));
 }
 let saveTimer = null;
+/* تقدير حجم كل بيانات البرنامج المخزَّنة محليًا، ونسبتها من الحد الشائع
+   للمتصفحات (~5 ميجابايت لكل تطبيق) — عشان ننبّه المستخدم قبل ما يوصل
+   لمرحلة فشل الحفظ فجأة */
+function getDBSizeInfo(){
+  let bytes = 0;
+  try{ bytes = new Blob([JSON.stringify(DB)]).size; }
+  catch(e){ bytes = JSON.stringify(DB).length; }
+  const limitBytes = 5*1024*1024;
+  const percent = Math.min(100, Math.round((bytes/limitBytes)*1000)/10);
+  return { bytes, mb: bytes/1024/1024, percent, limitBytes };
+}
+function updateStorageWarningBanner(){
+  const el = byId("storageWarningBanner");
+  if(!el) return;
+  const info = getDBSizeInfo();
+  if(info.percent>=90){
+    el.innerHTML = '<div class="alert" style="background:#fef2f2; border:1px solid #fecaca; color:#991b1b; justify-content:space-between; flex-wrap:wrap;">' +
+      '<span>🔴 مساحة التخزين المحلي على وشك الامتلاء (تقريبًا '+info.percent+'% من الحد الأقصى) — يُرجى عمل نسخة احتياطية فورًا، ثم تصدير وحذف البيانات القديمة لتفادي فشل الحفظ.</span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="goTab(\'backup\')">فتح النسخ الاحتياطي</button>' +
+    '</div>';
+  }else if(info.percent>=70){
+    el.innerHTML = '<div class="alert" style="background:#fffbeb; border:1px solid #fde68a; color:#92400e; justify-content:space-between; flex-wrap:wrap;">' +
+      '<span>🟠 مساحة التخزين المحلي وصلت تقريبًا لـ '+info.percent+'% من الحد الأقصى — يُستحسن عمل نسخة احتياطية قريبًا.</span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="goTab(\'backup\')">فتح النسخ الاحتياطي</button>' +
+    '</div>';
+  }else{
+    el.innerHTML = "";
+  }
+}
 function saveDB(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(DB));
@@ -671,6 +703,7 @@ function saveDB(){
   }catch(e){
     const el1 = byId("saveIndicator"); if(el1) el1.textContent = "⚠️ تعذر الحفظ";
   }
+  updateStorageWarningBanner();
   if(!syncState.applyingRemote) pushToCloud();
 }
 
@@ -768,6 +801,7 @@ function showApp(){
   render();
   applySidebarLogo();
   applyDarkModePreference();
+  updateStorageWarningBanner();
 }
 function applySidebarLogo(){
   const el = byId("sidebarBrand");
@@ -8369,8 +8403,14 @@ function renderVouchers(type){
   let html = sectionHead(
     isReceipt?"🧾":"💳", isReceipt?"سندات القبض":"سندات الصرف",
     isReceipt?"تسجيل المبالغ المُحصَّلة من العملاء أو أي جهة أخرى — يُنشئ قيد يومية تلقائيًا":"تسجيل المبالغ المدفوعة للموردين أو أي جهة أخرى — يُنشئ قيد يومية تلقائيًا",
-    '<button class="btn btn-primary" onclick="openVoucherForm(\''+type+'\')">➕ سند '+(isReceipt?"قبض":"صرف")+' جديد</button>'
+    '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<button class="btn btn-ghost" onclick="exportVouchersExcel(\''+type+'\')">📊 تصدير إكسيل</button>' +
+      '<button class="btn btn-ghost" onclick="ui.voucherImportType=\''+type+'\'; byId(\'vouchersImportInput\').click();">📥 استيراد من إكسيل</button>' +
+      '<button class="btn btn-primary" onclick="openVoucherForm(\''+type+'\')">➕ سند '+(isReceipt?"قبض":"صرف")+' جديد</button>' +
+    '</div>'
   );
+  html += '<input type="file" id="vouchersImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importVouchersExcel(event)"/>';
+  html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — التاريخ (YYYY-MM-DD)، نوع الجهة ('+(isReceipt?"عميل":"مورد")+'/جهة أخرى)، اسم الجهة، البيان، المبلغ، كود حساب الخزينة/البنك، كود الحساب المرتبط (اختياري). الاسم غير الموجود يُضاف تلقائيًا كجهة جديدة، وأكواد الحسابات الفارغة أو غير الصحيحة تُستبدَل بالحسابات الافتراضية. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
 
   if(ui.voucherForm && ui.voucherForm.type===type) html += renderVoucherForm(type);
 
@@ -8447,6 +8487,105 @@ function duplicateVoucher(type, id){
   if(!src) return;
   ui.voucherForm = Object.assign({}, src, { type, id:null, number: nextVoucherNumber(type), date: todayISO() });
   render();
+}
+/* ---- تصدير سندات القبض/الصرف كاملة إلى إكسيل ---- */
+function exportVouchersExcel(type){
+  if(!ensureExcelLib()) return;
+  const isReceipt = type==="receipt";
+  const key = isReceipt ? "receipts" : "payments";
+  const header = ["التاريخ","نوع الجهة","اسم الجهة","البيان","المبلغ","كود حساب الخزينة/البنك","كود الحساب المرتبط"];
+  const data = [header];
+  (DB[key]||[]).slice().sort((a,b)=> a.date<b.date?1:-1).forEach(r=>{
+    const cashAcc = DB.accounts.find(a=>a.id===r.cashAccountId);
+    const partyAcc = DB.accounts.find(a=>a.id===r.partyAccountId);
+    data.push([
+      r.date||"", r.partyKind==="other" ? "جهة أخرى" : (isReceipt?"عميل":"مورد"),
+      r.partyName||"", r.description||"", r.amount!=null?r.amount:"",
+      cashAcc?cashAcc.code:"", partyAcc?partyAcc.code:"",
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, isReceipt?"سندات القبض":"سندات الصرف");
+  downloadWorkbook(wb, (isReceipt?"سندات_القبض":"سندات_الصرف")+"_"+todayISO()+".xlsx");
+}
+/* ---- استيراد سندات القبض/الصرف من إكسيل (يُنشئ عملاء/موردين جددًا عند
+   الحاجة، ويُنشئ القيد المحاسبي تلقائيًا لكل صف مثل الإدخال اليدوي) ---- */
+function importVouchersExcel(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  if(!ensureExcelLib()){ event.target.value = ""; return; }
+  const type = ui.voucherImportType || "receipt";
+  const isReceipt = type==="receipt";
+  const key = isReceipt ? "receipts" : "payments";
+  const partyKindKey = isReceipt ? "customers" : "suppliers";
+  if(!canEditTab(key)){
+    alert("⛔ ليس لديك صلاحية التعديل في هذا القسم.");
+    event.target.value = ""; return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:"array", cellDates:true});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+      const cashAccounts = DB.accounts.filter(a=> a.type==="asset" && a.normal==="debit");
+      const defaultPartyAccount = isReceipt
+        ? (DB.accounts.find(a=>a.code==="10003")||null)
+        : (DB.accounts.find(a=>a.code==="20001")||null);
+      const otherAccounts = isReceipt
+        ? DB.accounts.filter(a=> a.type==="asset" || a.type==="revenue")
+        : DB.accounts.filter(a=> a.type==="liability" || a.type==="expense");
+
+      let added=0, skipped=0, lockedSkipped=0;
+      rows.forEach((row,i)=>{
+        if(i===0) return; // تجاهل صف العناوين
+        const date = excelCellToISODate(row[0]);
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(date)){ skipped++; return; }
+        const isOther = String(row[1]||"").trim()==="جهة أخرى";
+        const partyNameRaw = String(row[2]||"").trim();
+        if(!partyNameRaw){ skipped++; return; }
+        const amount = Number(row[4]);
+        if(!amount){ skipped++; return; }
+        if(isDateLocked(date)){ lockedSkipped++; return; }
+
+        let partyId="", partyName=partyNameRaw;
+        if(!isOther){
+          let party = DB[partyKindKey].find(p=>p.name.trim()===partyNameRaw);
+          if(!party){ party = {id:uid("p"), name:partyNameRaw, phone:"", address:"", bankName:"", bankAccountNumber:""}; if(isReceipt) party.creditLimit=""; DB[partyKindKey].push(party); }
+          partyId = party.id; partyName = party.name;
+        }
+
+        const cashCode = String(row[5]||"").trim();
+        const partyCode = String(row[6]||"").trim();
+        const cashAccount = (cashCode && DB.accounts.find(a=>a.code===cashCode)) || cashAccounts[0];
+        const partyAccount = (partyCode && DB.accounts.find(a=>a.code===partyCode)) || (isOther ? otherAccounts[0] : defaultPartyAccount);
+        if(!cashAccount || !partyAccount){ skipped++; return; }
+
+        const record = {
+          id: uid(isReceipt?"rc":"pv"), number: nextVoucherNumber(type), date,
+          partyKind: isOther ? "other" : partyKindKey, partyId, partyName,
+          description: String(row[3]||"").trim(),
+          amount, cashAccountId: cashAccount.id, partyAccountId: partyAccount.id,
+        };
+        DB[key].push(record);
+        upsertVoucherEntry(record, type);
+        added++;
+      });
+
+      logActivity("استيراد "+(isReceipt?"سندات قبض":"سندات صرف")+" من إكسيل", "إضافة: "+added);
+      saveDB(); render();
+      alert("تم الاستيراد بنجاح ✅\nإضافة "+added+" سند"+
+        (skipped?("، وتجاهل "+skipped+" صف (بيانات ناقصة أو غير صحيحة)"):"")+
+        (lockedSkipped?("، وتجاهل "+lockedSkipped+" صف بتاريخ يقع في فترة مقفلة"):"")+".");
+    }catch(err){
+      alert("تعذّرت قراءة ملف الإكسيل. تأكد أن الملف بصيغة xlsx/xls صحيحة وبنفس ترتيب الأعمدة الموضح أعلى الجدول.");
+    }
+    event.target.value = "";
+  };
+  reader.readAsArrayBuffer(file);
 }
 function renderVoucherForm(type){
   const f = ui.voucherForm;
@@ -8811,10 +8950,18 @@ function renderBackup(){
       'يحمّل ملفًا واحدًا (JSON) فيه كل بياناتك الحالية: الحسابات، القيود، العملاء، الموردون، كشوف المبيعات والمشتريات، وسندات القبض والصرف.' +
       ' احتفظ بالملف في مكان آمن (جوجل درايف، واتساب لنفسك، إلخ) — لو حصل أي مشكلة في الجهاز أو المتصفح تقدر تسترجع بياناتك منه.' +
     '</div>' +
-    '<div style="font-size:12.5px; color:var(--stone-500); margin-bottom:12px;">' +
+    '<div style="font-size:12.5px; color:var(--stone-500); margin-bottom:6px;">' +
       'عدد السجلات الحالية: <b class="num">'+countAll()+'</b>' +
       (lastBackup ? ' — آخر نسخة احتياطية: <b>'+esc(lastBackup)+'</b>' : ' — لم يتم أخذ أي نسخة احتياطية بعد') +
     '</div>' +
+    (function(){
+      const info = getDBSizeInfo();
+      const barColor = info.percent>=90 ? "#e11d48" : info.percent>=70 ? "#d97706" : "#059669";
+      return '<div style="margin-bottom:14px;">' +
+        '<div style="font-size:12.5px; color:var(--stone-500); margin-bottom:4px;">مساحة التخزين المستخدمة: <b>'+info.mb.toFixed(2)+' ميجابايت</b> من حوالي <b>5 ميجابايت</b> (الحد الشائع لكل تطبيق في المتصفح) — '+info.percent+'%</div>' +
+        '<div style="background:var(--stone-200); border-radius:6px; height:8px; overflow:hidden;"><div style="width:'+info.percent+'%; background:'+barColor+'; height:100%;"></div></div>' +
+      '</div>';
+    })() +
     '<button class="btn btn-primary" onclick="exportBackup()">⬇️ تنزيل نسخة احتياطية الآن</button>' +
     '<button class="btn btn-ghost" onclick="exportFullDatabaseExcel()" style="margin-right:8px;">📊 تصدير كل البيانات إكسيل (كل الجداول)</button>' +
   '</div>';
