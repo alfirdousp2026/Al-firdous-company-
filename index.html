@@ -349,6 +349,25 @@
   html.dark .btn-ghost:hover{background:#1a2436;}
   html.dark .search-result-item:hover{background:#1a2436;}
   html.dark .empty-row{color:#64748b;}
+
+  /* ===== ثيمات ألوان التطبيق (مستقلة عن الوضع الليلي — تتحكم في لون
+     الشريط الجانبي والأزرار الرئيسية وألوان التمييز في كل الصفحة) ===== */
+  html.theme-ocean{
+    --charcoal:#0c2340; --brand-orange:#2563eb; --brand-orange-dark:#1d4ed8; --brand-orange-light:#dbeafe;
+    --teal-50:#eff6ff; --teal-100:#dbeafe; --teal-200:#bfdbfe; --teal-600:#2563eb; --teal-700:#1d4ed8; --teal-800:#1e40af;
+  }
+  html.theme-emerald{
+    --charcoal:#0f2e22; --brand-orange:#059669; --brand-orange-dark:#047857; --brand-orange-light:#d1fae5;
+    --teal-50:#ecfdf5; --teal-100:#d1fae5; --teal-200:#a7f3d0; --teal-600:#059669; --teal-700:#047857; --teal-800:#065f46;
+  }
+  html.theme-purple{
+    --charcoal:#241533; --brand-orange:#7c3aed; --brand-orange-dark:#6d28d9; --brand-orange-light:#ede9fe;
+    --teal-50:#f5f3ff; --teal-100:#ede9fe; --teal-200:#ddd6fe; --teal-600:#7c3aed; --teal-700:#6d28d9; --teal-800:#5b21b6;
+  }
+  html.theme-slate{
+    --charcoal:#1e2530; --brand-orange:#475569; --brand-orange-dark:#334155; --brand-orange-light:#e2e8f0;
+    --teal-50:#f1f5f9; --teal-100:#e2e8f0; --teal-200:#cbd5e1; --teal-600:#475569; --teal-700:#334155; --teal-800:#1e293b;
+  }
 </style>
 </head>
 <body>
@@ -801,6 +820,7 @@ function showApp(){
   render();
   applySidebarLogo();
   applyDarkModePreference();
+  applyColorTheme();
   updateStorageWarningBanner();
 }
 function applySidebarLogo(){
@@ -885,6 +905,47 @@ function toggleDarkMode(){
   const on = !document.documentElement.classList.contains("dark");
   localStorage.setItem(DARK_MODE_KEY, on?"1":"0");
   applyDarkModePreference();
+}
+/* ======================================================================
+   ثيمات ألوان التطبيق (مستقلة عن الوضع الليلي — يمكن الجمع بينهما)
+   ====================================================================== */
+const COLOR_THEME_KEY = "ferdaws-color-theme-v1";
+const COLOR_THEMES = [
+  {id:"default", name:"الافتراضي (كحلي وبرتقالي)", swatch:"#0f172a", accent:"#f2740f"},
+  {id:"ocean",   name:"أزرق محيطي",                  swatch:"#0c2340", accent:"#2563eb"},
+  {id:"emerald", name:"أخضر زمردي",                   swatch:"#0f2e22", accent:"#059669"},
+  {id:"purple",  name:"بنفسجي ملكي",                  swatch:"#241533", accent:"#7c3aed"},
+  {id:"slate",   name:"رمادي أنيق (Graphite)",         swatch:"#1e2530", accent:"#475569"},
+];
+function applyColorTheme(){
+  const id = localStorage.getItem(COLOR_THEME_KEY) || "default";
+  const el = document.documentElement;
+  COLOR_THEMES.forEach(t=>{ if(t.id!=="default") el.classList.remove("theme-"+t.id); });
+  if(id!=="default") el.classList.add("theme-"+id);
+}
+function setColorTheme(id){
+  localStorage.setItem(COLOR_THEME_KEY, id);
+  applyColorTheme();
+  render();
+}
+function renderColorThemePicker(){
+  const current = localStorage.getItem(COLOR_THEME_KEY) || "default";
+  let html = '<div class="form-panel">' +
+    '<div style="font-weight:800; font-size:14px; margin-bottom:4px;">🎨 مظهر التطبيق</div>' +
+    '<div style="font-size:12px; color:var(--stone-500); margin-bottom:10px;">اختر لون الشريط الجانبي والأزرار الرئيسية في كل صفحات التطبيق (منفصل عن الوضع الليلي، ويمكن الجمع بينهما).</div>' +
+    '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
+  COLOR_THEMES.forEach(t=>{
+    const active = t.id===current;
+    html += '<button onclick="setColorTheme(\''+t.id+'\')" style="cursor:pointer; border:2px solid '+(active?t.accent:"var(--stone-300)")+'; border-radius:10px; padding:8px 10px; background:var(--stone-50); display:flex; flex-direction:column; align-items:center; gap:6px; width:100px;">' +
+      '<span style="display:flex; gap:2px;">' +
+        '<span style="width:16px; height:24px; border-radius:3px; background:'+t.swatch+';"></span>' +
+        '<span style="width:16px; height:24px; border-radius:3px; background:'+t.accent+';"></span>' +
+      '</span>' +
+      '<span style="font-size:11px; color:var(--charcoal2); text-align:center; line-height:1.4;">'+t.name+(active?' ✓':'')+'</span>' +
+    '</button>';
+  });
+  html += '</div></div>';
+  return html;
 }
 /* ======================================================================
    تكبير/تصغير حجم الواجهة (مفيد خصوصًا على الموبايل) — يستخدم خاصية
@@ -2529,7 +2590,13 @@ function renderAccounts(){
     items: DB.accounts.filter(a=>a.type===type).sort((a,b)=> isCustom ? ((Number(a.sortOrder)||0)-(Number(b.sortOrder)||0)) : a.code.localeCompare(b.code)),
   }));
   let html = sectionHead("🌳","شجرة الحسابات","تصنيف الحسابات إلى أصول، خصوم، حقوق ملكية، إيرادات ومصروفات",
-    '<button class="btn btn-primary" onclick="openAccountForm()">➕ حساب جديد</button>');
+    '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+      '<button class="btn btn-ghost" onclick="exportAccountsExcel()">📊 تصدير إكسيل</button>' +
+      '<button class="btn btn-ghost" onclick="byId(\'accountsImportInput\').click();">📥 استيراد من إكسيل</button>' +
+      '<button class="btn btn-primary" onclick="openAccountForm()">➕ حساب جديد</button>' +
+    '</div>');
+  html += '<input type="file" id="accountsImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importAccountsExcel(event)"/>';
+  html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — الكود، اسم الحساب، التصنيف الرئيسي (أصول/خصوم/حقوق ملكية/إيرادات/مصروفات)، التصنيف الفرعي، طبيعة الرصيد (مدينة/دائنة) — الصف الأول عناوين ويُتجاهل. لو الكود موجود بالفعل سيُحدَّث الحساب، ولو جديد سيُضاف. الحسابات الفرعية التلقائية (المرتبطة بعملاء/موردين/سائقين/مساعدين) غير مشمولة بالتصدير أو الاستيراد لأنها تُدار تلقائيًا من صفحاتها الخاصة. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
 
   html += '<div style="width:220px; margin-bottom:14px;"><label class="f-label">الترتيب</label><select class="f-input" onchange="ui.accountSortMode=this.value; render();">' +
     '<option value="code" '+(ui.accountSortMode==="code"?"selected":"")+'>حسب الكود (تلقائي)</option>' +
@@ -2663,6 +2730,79 @@ function deleteAccount(id){
   DB.accounts = DB.accounts.filter(a=>a.id!==id);
   logActivity("حذف حساب", acc?(acc.code+" - "+acc.name):"");
   saveDB(); render();
+}
+/* ---- تصدير شجرة الحسابات (باستثناء الحسابات الفرعية التلقائية
+   المرتبطة بعملاء/موردين/سائقين/مساعدين، لأنها تُدار من صفحاتها الخاصة) ---- */
+function exportAccountsExcel(){
+  if(!ensureExcelLib()) return;
+  const header = ["الكود","اسم الحساب","التصنيف الرئيسي","التصنيف الفرعي","طبيعة الرصيد"];
+  const data = [header];
+  DB.accounts.filter(a=>!(a.partyKind && a.partyId)).slice().sort((a,b)=>a.code.localeCompare(b.code)).forEach(a=>{
+    const typeLabel = ACCOUNT_TYPES[a.type] ? ACCOUNT_TYPES[a.type].label : a.type;
+    const subDef = (SUBTYPES[a.type]||[]).find(s=>s.id===accSubType(a));
+    data.push([a.code, a.name, typeLabel, subDef?subDef.label:"", a.normal==="debit"?"مدينة":"دائنة"]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "شجرة الحسابات");
+  downloadWorkbook(wb, "شجرة_الحسابات_"+todayISO()+".xlsx");
+}
+/* ---- استيراد شجرة الحسابات من إكسيل: يحدّث الحساب لو الكود موجود،
+   أو يضيف حسابًا جديدًا لو الكود غير موجود ---- */
+function importAccountsExcel(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  if(!ensureExcelLib()){ event.target.value = ""; return; }
+  if(!canEditTab("accounts")){
+    alert("⛔ ليس لديك صلاحية التعديل في هذا القسم.");
+    event.target.value = ""; return;
+  }
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:"array"});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+      const typeByLabel = {};
+      Object.entries(ACCOUNT_TYPES).forEach(([k,v])=>{ typeByLabel[v.label.trim()] = k; });
+
+      let added=0, updated=0, skipped=0;
+      rows.forEach((row,i)=>{
+        if(i===0) return; // تجاهل صف العناوين
+        const code = String(row[0]||"").trim();
+        const name = String(row[1]||"").trim();
+        if(!code || !name){ skipped++; return; }
+        const type = typeByLabel[String(row[2]||"").trim()];
+        if(!type){ skipped++; return; }
+        const subDefs = (SUBTYPES[type]||[]).filter(s=>s.id.indexOf("party_")!==0);
+        const subLabel = String(row[3]||"").trim();
+        const subDef = subDefs.find(s=>s.label.trim()===subLabel) || subDefs[0];
+        const normalLabel = String(row[4]||"").trim();
+        const normal = normalLabel==="مدينة" ? "debit" : normalLabel==="دائنة" ? "credit" : ACCOUNT_TYPES[type].normal;
+
+        const existing = DB.accounts.find(a=>a.code===code);
+        if(existing){
+          if(existing.partyKind && existing.partyId){ skipped++; return; } // حماية الحسابات الفرعية التلقائية
+          Object.assign(existing, {name, type, normal, subType: subDef?subDef.id:undefined});
+          updated++;
+        }else{
+          DB.accounts.push({id:uid("a"), code, name, type, normal, subType: subDef?subDef.id:undefined});
+          added++;
+        }
+      });
+
+      logActivity("استيراد شجرة الحسابات من إكسيل", "إضافة: "+added+" — تحديث: "+updated);
+      saveDB(); render();
+      alert("تم الاستيراد بنجاح ✅\nإضافة "+added+" حساب جديد، وتحديث "+updated+" حساب موجود"+
+        (skipped?("، وتجاهل "+skipped+" صف (بيانات ناقصة أو غير صحيحة أو حساب فرعي تلقائي)"):"")+".");
+    }catch(err){
+      alert("تعذّرت قراءة ملف الإكسيل. تأكد أن الملف بصيغة xlsx/xls صحيحة وبنفس ترتيب الأعمدة الموضح أعلى الجدول.");
+    }
+    event.target.value = "";
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 /* ======================================================================
@@ -3987,7 +4127,7 @@ function renderRegister(kind){
     '</div>'
   );
   html += '<input type="file" id="registerImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importRegisterExcel(event)"/>';
-  html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — التاريخ (YYYY-MM-DD)، اسم '+(isSales?"العميل":"المورد")+'، نوع العملية (نقل/توريد/فارغ)، الكمية، سعر الوحدة، المبلغ المسدد، مصنع التحميل، مكان التعتيق، اسم السائق، رقم الرحلة، اسم الجهة المرتبطة، كود الحساب الرئيسي، كود حساب السداد، كود حساب '+(isSales?"العملاء":"الموردين")+' الآجل'+(isSales?'، كود حساب المخزون':'')+' (الصف الأول عناوين ويُتجاهل). الاسم غير الموجود يُضاف تلقائيًا كجهة جديدة، وأكواد الحسابات الفارغة أو غير الصحيحة تُستبدَل بالحسابات الافتراضية. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
+  html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — التاريخ (YYYY-MM-DD)، اسم '+(isSales?"العميل":"المورد")+'، نوع العملية (نقل/توريد/فارغ)، الكمية، سعر الوحدة، المبلغ المسدد، مصنع التحميل، مكان التعتيق، اسم السائق، رقم السيارة، رقم الرحلة، اسم الجهة المرتبطة، كود الحساب الرئيسي، كود حساب السداد، كود حساب '+(isSales?"العملاء":"الموردين")+' الآجل'+(isSales?'، كود حساب المخزون':'')+' (الصف الأول عناوين ويُتجاهل). الاسم غير الموجود يُضاف تلقائيًا كجهة جديدة، وأكواد الحسابات الفارغة أو غير الصحيحة تُستبدَل بالحسابات الافتراضية. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
 
   if(ui.registerForm && ui.registerForm.kind===kind) html += renderRegisterForm();
 
@@ -3995,6 +4135,7 @@ function renderRegister(kind){
   ui.registerSearch = ui.registerSearch || {sales:"", purchases:""};
   ui.registerQtySearch = ui.registerQtySearch || {sales:"", purchases:""};
   ui.registerDayFilter = ui.registerDayFilter || {sales:"", purchases:""};
+  ui.registerHideVehicle = ui.registerHideVehicle || {sales:false, purchases:false};
   html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:14px;">' +
     '<div style="width:150px;"><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(ui.registerFilterFrom||"")+'" onchange="ui.registerFilterFrom=this.value; render();"/></div>' +
     '<div style="width:150px;"><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(ui.registerFilterTo||"")+'" onchange="ui.registerFilterTo=this.value; render();"/></div>' +
@@ -4092,9 +4233,11 @@ function renderRegisterBody(kind){
 
   const opTypeLabels = {transport:"🚚 نقل", supply:"📦 توريد"};
   const cogsCols = isSales ? '<th class="tleft">تكلفة البضاعة</th><th class="tleft">إجمالي الربح</th>' : '';
-  const colCount = (isSales ? 14 : 12) + 2;
+  const hideVehicle = !!ui.registerHideVehicle[kind];
+  const colCount = (isSales ? 14 : 12) + 3 - (hideVehicle?1:0);
   html += bulkSelectBarHtml(kind, list.map(r=>r.id));
-  html += '<div class="table-wrap"><table><thead><tr><th style="width:32px;"></th><th style="width:40px;">#</th><th>التاريخ</th><th>'+(isSales?"العميل":"المورد")+'</th><th>'+crossLabel+'</th><th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th><th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>'+cogsCols+'<th class="tleft">إجراءات</th></tr></thead><tbody>';
+  html += '<div style="margin-bottom:8px;"><button class="btn btn-ghost btn-sm" onclick="ui.registerHideVehicle[\''+kind+'\']=!ui.registerHideVehicle[\''+kind+'\']; updateRegisterBody(\''+kind+'\');">🚗 '+(hideVehicle?"إظهار":"إخفاء")+' عمود رقم السيارة</button></div>';
+  html += '<div class="table-wrap"><table><thead><tr><th style="width:32px;"></th><th style="width:40px;">#</th><th>التاريخ</th><th>'+(isSales?"العميل":"المورد")+'</th><th>'+crossLabel+'</th><th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th>'+(hideVehicle?"":'<th>رقم السيارة</th>')+'<th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>'+cogsCols+'<th class="tleft">إجراءات</th></tr></thead><tbody>';
   if(list.length===0){
     html += '<tr><td colspan="'+colCount+'"><div class="empty-row">لا توجد عمليات مطابقة</div></td></tr>';
   }
@@ -4122,6 +4265,7 @@ function renderRegisterBody(kind){
       '<td>'+esc(r.loadingFactory||"—")+'</td>' +
       '<td>'+esc(r.unloadingLocation||"—")+'</td>' +
       '<td>'+esc(r.driverName||"—")+'</td>' +
+      (hideVehicle?"":'<td>'+esc(r.vehicleNumber||"—")+'</td>') +
       '<td class="tleft num">'+esc(r.quantity)+'</td>' +
       '<td class="tleft num">'+money(r.unitPrice)+'</td>' +
       '<td class="tleft num" style="font-weight:700;">'+money(r.amount)+'</td>' +
@@ -4140,7 +4284,7 @@ function renderRegisterBody(kind){
     const cogsFootCells = isSales
       ? '<td class="tleft num">'+money(totalCogs)+'</td><td class="tleft num">'+money(totalAmount-totalCogs)+'</td>'
       : '';
-    html += '<tfoot><tr><td colspan="10">الإجمالي</td>' +
+    html += '<tfoot><tr><td colspan="'+(hideVehicle?9:10)+'">الإجمالي</td>' +
       '<td class="tleft num">'+money(totalAmount)+'</td>' +
       '<td class="tleft num">'+money(totalPaid)+'</td>' +
       '<td class="tleft num">'+money(totalAmount-totalPaid)+'</td>'+cogsFootCells+'<td></td></tr></tfoot>';
@@ -4177,10 +4321,10 @@ function printRegister(kind){
 
   const theadRow = '<tr><th>التاريخ</th><th>'+(isSales?"العميل":"المورد")+'</th>' +
     (hideCross?'':'<th>'+crossLabel+'</th>') +
-    '<th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th><th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>' +
+    '<th>نوع العملية</th><th>مصنع التحميل</th><th>مكان التعتيق</th><th>السائق</th><th>رقم السيارة</th><th class="tleft">الكمية</th><th class="tleft">سعر الوحدة</th><th class="tleft">الإجمالي</th><th class="tleft">المسدد</th><th class="tleft">المتبقي</th>' +
     (showCogs?'<th class="tleft">تكلفة البضاعة</th><th class="tleft">إجمالي الربح</th>':'') +
   '</tr>';
-  const footColspan = 6 + (hideCross?0:1);
+  const footColspan = 7 + (hideCross?0:1);
 
   function rowHtml(r){
     const party = parties.find(p=>p.id===r[partyField]);
@@ -4200,6 +4344,7 @@ function printRegister(kind){
       '<td>'+esc(r.loadingFactory||"—")+'</td>' +
       '<td>'+esc(r.unloadingLocation||"—")+'</td>' +
       '<td>'+esc(r.driverName||"—")+'</td>' +
+      '<td>'+esc(r.vehicleNumber||"—")+'</td>' +
       '<td class="tleft">'+esc(r.quantity)+'</td>' +
       '<td class="tleft">'+money(r.unitPrice)+'</td>' +
       '<td class="tleft">'+money(r.amount)+'</td>' +
@@ -4288,7 +4433,7 @@ function openRegisterForm(kind, id){
     ui.registerForm = Object.assign({kind}, r, {linkedPurchaseIds: Array.isArray(r.linkedPurchaseIds) ? r.linkedPurchaseIds.slice() : []});
   }else{
     ui.registerForm = {
-      kind, id:null, date:todayISO(), [partyField]:"", operationType:"", loadingFactory:"", unloadingLocation:"", driverName:"",
+      kind, id:null, date:todayISO(), [partyField]:"", operationType:"", loadingFactory:"", unloadingLocation:"", driverName:"", vehicleNumber:"",
       quantity:"", unitPrice:"", paid:"",
       mainAccountId: (mainAccounts[0]&&mainAccounts[0].id)||"",
       paymentAccountId: (cashAccounts[0]&&cashAccounts[0].id)||"",
@@ -4340,6 +4485,7 @@ function renderRegisterForm(){
         '<div><label class="f-label">مصنع التحميل</label><input class="f-input" id="rf-loading" value="'+esc(f.loadingFactory||"")+'" placeholder="مثال: مصنع أسمنت السويس"/></div>' +
         '<div><label class="f-label">مكان التعتيق</label><input class="f-input" id="rf-unloading" value="'+esc(f.unloadingLocation||"")+'" placeholder="مثال: موقع العميل - العاشر من رمضان"/></div>' +
         '<div><label class="f-label">اسم السائق (اختياري)</label><input class="f-input" id="rf-driver" value="'+esc(f.driverName||"")+'" placeholder="اكتب الاسم يدويًا"/></div>' +
+        '<div><label class="f-label">🚗 رقم السيارة (اختياري)</label><input class="f-input" id="rf-vehicle" value="'+esc(f.vehicleNumber||"")+'" placeholder="مثال: أ ب ج 1234"/></div>' +
         '<div><label class="f-label">🏷️ رقم/كود الرحلة (اختياري — طريقة أبسط لحساب تكلفة البضاعة)</label><input class="f-input" id="rf-trip-number" value="'+esc(f.tripNumber||"")+'" placeholder="مثال: 1 أو R25"/>' +
           '<div style="font-size:11px; color:var(--stone-500); margin-top:3px;">اكتب نفس الرقم بالظبط في عملية الشراء (توريد + نقل) وعملية البيع الخاصة بنفس الرحلة — تكلفة البضاعة عند البيع هتتحسب تلقائيًا كمجموع كل عمليات الشراء اللي عليها نفس الرقم، بدل الاختيار من قائمة أو الاعتماد على ترتيب المخزون العام. أسهل وأدق من الربط اليدوي.</div>' +
         '</div>' +
@@ -4471,6 +4617,7 @@ function saveRegisterForm(){
     loadingFactory: byId("rf-loading").value.trim(),
     unloadingLocation: byId("rf-unloading").value.trim(),
     driverName: byId("rf-driver") ? byId("rf-driver").value.trim() : "",
+    vehicleNumber: byId("rf-vehicle") ? byId("rf-vehicle").value.trim() : "",
     tripNumber: byId("rf-trip-number") ? byId("rf-trip-number").value.trim() : "",
     quantity: byId("rf-qty").value,
     unitPrice: byId("rf-price").value,
@@ -4567,7 +4714,7 @@ function exportRegisterExcel(kind){
   const crossParties = DB[isSales?"suppliers":"customers"];
   const opLabel = {transport:"نقل", supply:"توريد"};
   const header = ["التاريخ","اسم "+(isSales?"العميل":"المورد"),"نوع العملية","الكمية","سعر الوحدة","المبلغ المسدد",
-    "مصنع التحميل","مكان التعتيق","اسم السائق","رقم الرحلة","اسم الجهة المرتبطة",
+    "مصنع التحميل","مكان التعتيق","اسم السائق","رقم السيارة","رقم الرحلة","اسم الجهة المرتبطة",
     "كود الحساب الرئيسي","كود حساب السداد","كود حساب "+(isSales?"العملاء":"الموردين")+" الآجل"]
     .concat(isSales ? ["كود حساب المخزون"] : []);
   const data = [header];
@@ -4581,7 +4728,7 @@ function exportRegisterExcel(kind){
     const row = [
       r.date||"", party?party.name:"", opLabel[r.operationType]||"",
       r.quantity!=null?r.quantity:"", r.unitPrice!=null?r.unitPrice:"", r.paid!=null?r.paid:"",
-      r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.tripNumber||"",
+      r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.vehicleNumber||"", r.tripNumber||"",
       crossParty?crossParty.name:"",
       mainAcc?mainAcc.code:"", payAcc?payAcc.code:"", defAcc?defAcc.code:"",
     ];
@@ -4656,13 +4803,13 @@ function importRegisterExcel(event){
         const paid = Number(row[5])||0;
         const amount = quantity*unitPrice;
         const remain = Math.max(amount-paid, 0);
-        const crossName = String(row[10]||"").trim();
+        const crossName = String(row[11]||"").trim();
         const crossParty = crossName ? DB[crossKind].find(p=>p.name.trim()===crossName) : null;
 
-        const mainCode = String(row[11]||"").trim();
-        const payCode = String(row[12]||"").trim();
-        const defCode = String(row[13]||"").trim();
-        const invCode = isSales ? String(row[14]||"").trim() : "";
+        const mainCode = String(row[12]||"").trim();
+        const payCode = String(row[13]||"").trim();
+        const defCode = String(row[14]||"").trim();
+        const invCode = isSales ? String(row[15]||"").trim() : "";
         const mainAccount = (mainCode && DB.accounts.find(a=>a.code===mainCode)) || mainAccounts[0];
         const paymentAccount = (payCode && DB.accounts.find(a=>a.code===payCode)) || (paid>0 ? cashAccounts[0] : null);
         const deferredAccount = (defCode && DB.accounts.find(a=>a.code===defCode)) || (remain>0 ? deferredDefault : null);
@@ -4672,7 +4819,7 @@ function importRegisterExcel(event){
         const payload = {
           id: uid(isSales?"sl":"pu"), date, [partyField]: party.id, operationType: opType,
           loadingFactory: String(row[6]||"").trim(), unloadingLocation: String(row[7]||"").trim(),
-          driverName: String(row[8]||"").trim(), tripNumber: String(row[9]||"").trim(),
+          driverName: String(row[8]||"").trim(), vehicleNumber: String(row[9]||"").trim(), tripNumber: String(row[10]||"").trim(),
           quantity: String(quantity), unitPrice: String(unitPrice), paid: String(paid), amount,
           mainAccountId: mainAccount.id,
           paymentAccountId: paymentAccount?paymentAccount.id:"",
@@ -7687,7 +7834,23 @@ function renderStatement(){
 function openPrintArea(html){
   const el = byId("printArea");
   if(!el) return;
-  el.innerHTML = html;
+  const s = loadPrintSettings();
+  let style = '<style>' +
+    '.print-doc:not(.theme-dark):not(.theme-minimal) .print-table thead th{background:'+s.accentColor+' !important; border-color:'+s.accentColor+' !important; color:#fff !important;}' +
+    '.print-doc:not(.theme-minimal) .print-table tfoot td{border-top-color:'+s.accentColor+' !important;}' +
+    '.print-doc.theme-formal{border-color:'+s.accentColor+' !important;}' +
+    '.print-doc.theme-formal .print-head{border-color:'+s.accentColor+' !important;}' +
+    (s.zebra ? '.print-doc:not(.theme-minimal) .print-table tbody tr:nth-child(even){background:#f8fafc;}' : '') +
+    '.print-table thead th{position:sticky; top:0;}' +
+    '.print-table tr{page-break-inside:avoid;}' +
+  '</style>';
+  const watermarkHtml = (s.watermark && s.watermarkText)
+    ? '<div class="print-watermark">'+esc(s.watermarkText)+'</div>'
+    : '';
+  const timestampHtml = s.showTimestamp
+    ? '<div style="margin-top:18px; font-size:10.5px; color:#94a3b8; text-align:center;">تمت الطباعة بتاريخ '+fmtDate(todayISO())+' الساعة '+new Date().toLocaleTimeString("ar-EG",{hour:"2-digit",minute:"2-digit"})+'</div>'
+    : '';
+  el.innerHTML = style + watermarkHtml + html + timestampHtml;
   setTimeout(function(){ window.print(); }, 60);
 }
 /* عناصر طباعة مشتركة: رأس المستند وتذييل التوقيعات */
@@ -7722,10 +7885,15 @@ function generateQRDataUrl(text, size){
   }catch(e){ return null; }
 }
 function printSignHtml(partyLabel){
+  const s = loadPrintSettings();
+  const stampBox = s.showStampBox
+    ? '<div style="border:1px dashed #94a3b8; border-radius:8px; width:110px; height:64px; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:11px;">ختم الشركة</div>'
+    : '';
   return '<div class="print-sign">' +
     '<div>'+esc(partyLabel||"توقيع الطرف الآخر")+'</div>' +
     '<div>توقيع المحاسب<br/><b>ا. إيهاب محمد</b></div>' +
     '<div>توقيع مدير الشركة<br/><b>أ. أحمد رجب</b></div>' +
+    stampBox +
   '</div>';
 }
 function printStatement(selectedOnly){
@@ -7929,8 +8097,8 @@ function exportFullDatabaseExcel(){
   addSheet("قيود اليومية", entryRows, ["رقم القيد","التاريخ","البيان","الحساب","مدين","دائن","النوع"]);
   addSheet("العملاء", DB.customers.map(c=>[c.name,c.phone||"",c.address||"",c.bankName||"",c.bankAccountNumber||"",partyBalance("customers",c.id)]), ["الاسم","الهاتف","العنوان","البنك","رقم الحساب","الرصيد"]);
   addSheet("الموردون", DB.suppliers.map(s=>[s.name,s.phone||"",s.address||"",s.bankName||"",s.bankAccountNumber||"",partyBalance("suppliers",s.id)]), ["الاسم","الهاتف","العنوان","البنك","رقم الحساب","الرصيد"]);
-  addSheet("المبيعات", DB.sales.map(r=>{const c=DB.customers.find(x=>x.id===r.customerId); return [fmtDate(r.date), c?c.name:"", (r.operationType==="transport"?"نقل":r.operationType==="supply"?"توريد":""), r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.quantity||"", r.unitPrice||"", r.amount||0, r.paid||0];}), ["التاريخ","العميل","نوع العملية","مصنع التحميل","مكان التعتيق","السائق","الكمية","سعر الوحدة","الإجمالي","المسدد"]);
-  addSheet("المشتريات", DB.purchases.map(r=>{const s=DB.suppliers.find(x=>x.id===r.supplierId); return [fmtDate(r.date), s?s.name:"", (r.operationType==="transport"?"نقل":r.operationType==="supply"?"توريد":""), r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.quantity||"", r.unitPrice||"", r.amount||0, r.paid||0];}), ["التاريخ","المورد","نوع العملية","مصنع التحميل","مكان التعتيق","السائق","الكمية","سعر الوحدة","الإجمالي","المسدد"]);
+  addSheet("المبيعات", DB.sales.map(r=>{const c=DB.customers.find(x=>x.id===r.customerId); return [fmtDate(r.date), c?c.name:"", (r.operationType==="transport"?"نقل":r.operationType==="supply"?"توريد":""), r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.vehicleNumber||"", r.quantity||"", r.unitPrice||"", r.amount||0, r.paid||0];}), ["التاريخ","العميل","نوع العملية","مصنع التحميل","مكان التعتيق","السائق","رقم السيارة","الكمية","سعر الوحدة","الإجمالي","المسدد"]);
+  addSheet("المشتريات", DB.purchases.map(r=>{const s=DB.suppliers.find(x=>x.id===r.supplierId); return [fmtDate(r.date), s?s.name:"", (r.operationType==="transport"?"نقل":r.operationType==="supply"?"توريد":""), r.loadingFactory||"", r.unloadingLocation||"", r.driverName||"", r.vehicleNumber||"", r.quantity||"", r.unitPrice||"", r.amount||0, r.paid||0];}), ["التاريخ","المورد","نوع العملية","مصنع التحميل","مكان التعتيق","السائق","رقم السيارة","الكمية","سعر الوحدة","الإجمالي","المسدد"]);
   addSheet("سندات القبض", (DB.receipts||[]).map(r=>[r.number,fmtDate(r.date),r.partyName||"",r.description||"",r.amount||0]), ["رقم السند","التاريخ","الطرف","البيان","المبلغ"]);
   addSheet("سندات الصرف", (DB.payments||[]).map(r=>[r.number,fmtDate(r.date),r.partyName||"",r.description||"",r.amount||0]), ["رقم السند","التاريخ","الطرف","البيان","المبلغ"]);
   addSheet("السائقون", (DB.drivers||[]).map(d=>[d.name,d.phone||"",d.dailyRate||""]), ["الاسم","الهاتف","أجر اليوم الافتراضي"]);
@@ -8976,7 +9144,9 @@ function renderBackup(){
   '</div>';
 
   html += renderEmailBackupPanel();
+  html += renderColorThemePicker();
   html += renderCompanyInfoPanel();
+  html += renderPrintSettingsPanel();
   html += renderAIConfigPanel();
   html += renderPeriodLockPanel();
   html += renderArchivePanel();
@@ -9046,6 +9216,46 @@ function removeLogo(){
   saveCompanyInfoObj(info);
   render();
   applySidebarLogo();
+}
+/* ---- إعدادات تنسيق عامة تُطبَّق تلقائيًا على كل الكشوفات القابلة
+   للطباعة في البرنامج (كشف الحساب، الكشف المجمع، السندات، عهدة
+   السائقين، تحليل المبيعات والمشتريات...) دفعة واحدة، لأنها تُحقن
+   مركزيًا داخل openPrintArea() و printSignHtml() اللي بيستخدمهم الجميع */
+const PRINT_SETTINGS_KEY = "ferdaws-print-settings-v1";
+function loadPrintSettings(){
+  const defaults = { accentColor:"#0f172a", zebra:true, watermark:false, watermarkText:"", showTimestamp:true, showStampBox:false };
+  try{ return Object.assign({}, defaults, JSON.parse(localStorage.getItem(PRINT_SETTINGS_KEY))||{}); }
+  catch(e){ return defaults; }
+}
+function savePrintSettingsObj(o){ localStorage.setItem(PRINT_SETTINGS_KEY, JSON.stringify(o)); }
+function renderPrintSettingsPanel(){
+  const s = loadPrintSettings();
+  return '<div class="form-panel">' +
+      '<div style="font-weight:800; font-size:14px; margin-bottom:4px;">🖨️ تنسيق الكشوفات المطبوعة</div>' +
+      '<div style="font-size:12px; color:var(--stone-500); margin-bottom:10px;">تُطبَّق هذه الإعدادات تلقائيًا على كل كشف أو مستند تطبعه من أي صفحة في البرنامج.</div>' +
+      '<div class="form-grid cols-3">' +
+        '<div><label class="f-label">لون رأس الجدول والتمييز الرئيسي</label><input class="f-input" type="color" id="ps-color" value="'+esc(s.accentColor)+'" style="height:40px; padding:4px;"/></div>' +
+        '<div><label class="f-label">تظليل صفوف الجدول بالتبادل (Zebra)</label><select class="f-input" id="ps-zebra"><option value="1" '+(s.zebra?"selected":"")+'>مفعّل</option><option value="0" '+(!s.zebra?"selected":"")+'>غير مفعّل</option></select></div>' +
+        '<div><label class="f-label">إظهار توقيت الطباعة أسفل المستند</label><select class="f-input" id="ps-timestamp"><option value="1" '+(s.showTimestamp?"selected":"")+'>مفعّل</option><option value="0" '+(!s.showTimestamp?"selected":"")+'>غير مفعّل</option></select></div>' +
+        '<div><label class="f-label">صندوق "ختم الشركة" بجانب التوقيعات</label><select class="f-input" id="ps-stamp"><option value="1" '+(s.showStampBox?"selected":"")+'>مفعّل</option><option value="0" '+(!s.showStampBox?"selected":"")+'>غير مفعّل</option></select></div>' +
+        '<div><label class="f-label">علامة مائية (اختياري)</label><select class="f-input" id="ps-watermark-on"><option value="0" '+(!s.watermark?"selected":"")+'>بدون علامة مائية</option><option value="1" '+(s.watermark?"selected":"")+'>إظهار علامة مائية</option></select></div>' +
+        '<div><label class="f-label">نص العلامة المائية</label><input class="f-input" id="ps-watermark-text" value="'+esc(s.watermarkText)+'" placeholder="مثال: نسخة إلكترونية / مسودة"/></div>' +
+      '</div>' +
+      '<div style="font-size:11px; color:var(--stone-500); margin-top:8px;">💡 هذه الإعدادات تضيف لمسة احترافية فوق أي "نمط طباعة" (كلاسيكي/داكن/بسيط/رسمي) تختاره في كل كشف على حدة — النمط البسيط يتجاهل اللون والتظليل تلقائيًا حفاظًا على وضوحه عند الطباعة بالأبيض والأسود.</div>' +
+      '<div class="form-actions"><button class="btn btn-primary" onclick="savePrintSettings()">✔ حفظ إعدادات الطباعة</button></div>' +
+    '</div>';
+}
+function savePrintSettings(){
+  savePrintSettingsObj({
+    accentColor: byId("ps-color").value || "#0f172a",
+    zebra: byId("ps-zebra").value==="1",
+    showTimestamp: byId("ps-timestamp").value==="1",
+    showStampBox: byId("ps-stamp").value==="1",
+    watermark: byId("ps-watermark-on").value==="1",
+    watermarkText: byId("ps-watermark-text").value.trim(),
+  });
+  alert("✔ تم حفظ إعدادات الطباعة — ستُطبَّق على كل كشف تطبعه بعد الآن");
+  render();
 }
 function renderContactQRPanel(c){
   if(!c.whatsapp && !c.facebook) return '';
@@ -10388,6 +10598,7 @@ function printThermalReceipt(mode, a, b){
     const isSales = kind==="sales";
     const party = isSales ? DB.customers.find(p=>p.id===r.customerId) : DB.suppliers.find(p=>p.id===r.supplierId);
     const driver = r.driverName || "";
+    const vehicle = r.vehicleNumber || "";
     const routeDesc = registerRouteLabel(r) || "—";
     bodyHtml =
       '<h2>'+esc(company.name||"الفردوس للنقل والتوريد")+'</h2>' +
@@ -10396,6 +10607,7 @@ function printThermalReceipt(mode, a, b){
       '<div>'+(isSales?"إيصال بيع":"إيصال شراء")+' — '+fmtDate(r.date)+'</div>' +
       '<div>'+(isSales?"العميل: ":"المورد: ")+esc(party?party.name:"—")+'</div>' +
       (driver ? '<div>السائق: '+esc(driver)+'</div>' : '') +
+      (vehicle ? '<div>رقم السيارة: '+esc(vehicle)+'</div>' : '') +
       '<hr/>' +
       '<table><tr><td>'+esc(routeDesc)+'</td><td style="text-align:left;">'+money(r.amount)+'</td></tr></table>' +
       '<hr/>' +
