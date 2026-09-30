@@ -217,6 +217,14 @@
   .print-head{display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2px solid #0f172a; padding-bottom:12px; margin-bottom:14px;}
   .print-co{font-size:18px; font-weight:800;}
   .print-co-sub{font-size:11px; color:#57534e; font-weight:400; margin-top:2px;}
+  .print-head.lay-centername{display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px;}
+  .print-head.lay-centername .print-head-name{text-align:center;}
+  .print-head.lay-centername .print-doc-title{text-align:left;}
+  .print-head.lay-stack{flex-direction:column; align-items:center; text-align:center; gap:6px;}
+  .print-head.lay-stack .print-doc-title{text-align:center; border-top:1px dashed #94a3b8; padding-top:6px; width:100%;}
+  .print-co-name{font-size:22px; font-weight:900; line-height:1.3; letter-spacing:.2px;}
+  .print-tagline{text-align:center; font-size:12.5px; font-weight:700; color:#0f172a; padding:5px 10px; margin-bottom:8px; border-bottom:1px dotted #94a3b8; letter-spacing:.3px;}
+  .thermal-receipt .tr-tagline{text-align:center; font-size:10px; font-weight:700; margin-bottom:4px;}
   .print-doc-title{font-size:16px; font-weight:800; text-align:left;}
   .print-doc-num{font-size:11px; color:#57534e; font-weight:400; margin-top:4px;}
   .print-row{display:flex; gap:8px; font-size:13px; padding:4px 0; border-bottom:1px dashed #d6d3d1;}
@@ -669,6 +677,13 @@ const emptyDB = {
   checks:[], vehicles:[], maintenanceLogs:[], fuelLogs:[], approvalRequests:[],
   recurringTemplates:[], budgets:[], trips:[], quotations:[], trash:[]
 };
+/* يضمن إن كل القوائم الأساسية مصفوفات (لو ملف/تخزين تالف فيه null أو قيمة غلط، بدل ما التطبيق يقع) */
+function normalizeDB(db){
+  Object.keys(emptyDB).forEach(function(k){
+    if(Array.isArray(emptyDB[k]) && !Array.isArray(db[k])) db[k] = (k==="accounts") ? DEFAULT_ACCOUNTS.slice() : [];
+  });
+  return db;
+}
 let DB = loadDB();
 
 function loadDB(){
@@ -676,7 +691,7 @@ function loadDB(){
     const raw = localStorage.getItem(STORAGE_KEY);
     if(raw){
       const parsed = JSON.parse(raw);
-      return Object.assign({}, emptyDB, parsed);
+      return normalizeDB(Object.assign({}, emptyDB, parsed));
     }
   }catch(e){ /* تجاهل بيانات تالفة */ }
   return JSON.parse(JSON.stringify(emptyDB));
@@ -4089,7 +4104,18 @@ function togglePartyArchive(kind, id){
 function deleteParty(kind, id, skipConfirm){
   if(!canEditTab(ui.tab)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
   const p = DB[kind].find(x=>x.id===id);
-  if(!skipConfirm && !confirm("هل تريد حذف هذا السجل؟")) return;
+  if(!skipConfirm){
+    /* تحذير لو للجهة عمليات/سندات مسجّلة: حذفها بيسيب العمليات دي من غير اسم في الكشوفات */
+    let txCount = 0;
+    if(kind==="customers"){
+      txCount = (DB.sales||[]).filter(x=>x.customerId===id).length + (DB.receipts||[]).filter(x=>x.partyKind==="customers" && x.partyId===id).length;
+    }else if(kind==="suppliers"){
+      txCount = (DB.purchases||[]).filter(x=>x.supplierId===id).length + (DB.payments||[]).filter(x=>x.partyKind==="suppliers" && x.partyId===id).length;
+    }
+    if(txCount>0){
+      if(!confirm("⚠️ لهذه الجهة ("+(p?p.name:"")+") "+txCount+" عملية/سند مسجّلين. حذفها سيترك هذه العمليات بدون اسم جهة في الكشوفات والتقارير (ويمكن استرجاعها من سلة المحذوفات). يفضّل عدم الحذف إلا للضرورة. هل تريد المتابعة؟")) return;
+    }else if(!confirm("هل تريد حذف هذا السجل؟")) return;
+  }
   if(p && p.linkedPartyId){
     const otherKind = kind==="customers" ? "suppliers" : "customers";
     const other = DB[otherKind].find(x=>x.id===p.linkedPartyId);
@@ -4217,6 +4243,7 @@ function renderRegisterBody(kind){
         '<option value="minimal">بسيط (موفّر للحبر)</option>' +
         '<option value="formal">رسمي مؤطر</option>' +
       '</select></div>' +
+      printColorFieldsHtml() +
       '<div><label class="f-label">طريقة العرض</label><select class="f-input" id="reg-print-grouping">' +
         '<option value="all">الكل معًا (كشف واحد)</option>' +
         '<option value="monthly">مجمّع شهر بشهر (كل شهر بإجمالي مستقل)</option>' +
@@ -7774,6 +7801,7 @@ function renderStatement(){
         '<option value="minimal">بسيط (موفّر للحبر)</option>' +
         '<option value="formal">رسمي مؤطر</option>' +
       '</select></div>' +
+      printColorFieldsHtml() +
       '<div><label class="f-label">ملاحظات تظهر أسفل الكشف (اختياري)</label><input class="f-input" id="print-note" placeholder="مثال: يرجى السداد خلال 7 أيام"/></div>' +
       '<div style="display:flex; align-items:flex-end;"><label style="display:flex; align-items:center; gap:6px; font-size:12.5px; padding-bottom:8px;"><input type="checkbox" id="print-watermark"/> إظهار علامة مائية "نسخة إلكترونية"</label></div>' +
       '<div style="display:flex; align-items:flex-end;"><label style="display:flex; align-items:center; gap:6px; font-size:12.5px; padding-bottom:8px;"><input type="checkbox" id="print-details" checked/> إظهار تفاصيل الكمية والنولون لكل عملية</label></div>' +
@@ -7835,12 +7863,39 @@ function openPrintArea(html){
   const el = byId("printArea");
   if(!el) return;
   const s = loadPrintSettings();
+  const ovColor = byId("print-color") ? byId("print-color").value : "";
+  const ovFill = byId("print-fill") ? byId("print-fill").value : "";
+  const accent = ovColor || s.accentColor;
+  const fill = ovFill || s.fillMode || "none";
+  const ovFrame = byId("print-frame") ? byId("print-frame").value : "";
+  const frame = ovFrame || s.frameStyle || "none";
+  const soft = tintColor(accent, 0.90), softer = tintColor(accent, 0.95);
   let style = '<style>' +
-    '.print-doc:not(.theme-dark):not(.theme-minimal) .print-table thead th{background:'+s.accentColor+' !important; border-color:'+s.accentColor+' !important; color:#fff !important;}' +
-    '.print-doc:not(.theme-minimal) .print-table tfoot td{border-top-color:'+s.accentColor+' !important;}' +
-    '.print-doc.theme-formal{border-color:'+s.accentColor+' !important;}' +
-    '.print-doc.theme-formal .print-head{border-color:'+s.accentColor+' !important;}' +
-    (s.zebra ? '.print-doc:not(.theme-minimal) .print-table tbody tr:nth-child(even){background:#f8fafc;}' : '') +
+    '.print-doc:not(.theme-dark):not(.theme-minimal) .print-table thead th{background:'+accent+' !important; border-color:'+accent+' !important; color:#fff !important;}' +
+    '.print-doc:not(.theme-minimal) .print-table tfoot td{border-top-color:'+accent+' !important;}' +
+    '.print-doc.theme-formal{border-color:'+accent+' !important;}' +
+    '.print-doc.theme-formal .print-head{border-color:'+accent+' !important;}' +
+    '.print-doc:not(.theme-minimal) .print-co-name{color:'+accent+';}' +
+    '.print-doc:not(.theme-minimal) .print-tagline{color:'+accent+'; border-bottom-color:'+accent+';}' +
+    (s.zebra ? '.print-doc:not(.theme-minimal) .print-table tbody tr:nth-child(even){background:'+(fill!=="none"?softer:'#f8fafc')+';}' : '') +
+    (fill==="soft" ?
+      '.print-doc:not(.theme-minimal) .print-head{background:'+soft+' !important; padding:12px 14px !important; border-radius:8px; border-bottom:2px solid '+accent+' !important; color:#0f172a !important;}' +
+      '.print-doc:not(.theme-minimal) .print-co-sub,.print-doc:not(.theme-minimal) .print-doc-num{color:#475569 !important;}' +
+      '.print-doc.theme-dark .print-table thead th{background:'+accent+' !important; color:#fff !important;}' +
+      '.print-doc:not(.theme-minimal) .print-table tfoot td{background:'+soft+' !important; color:#0f172a !important;}' +
+      '.print-doc:not(.theme-minimal) .print-row{background:'+softer+'; padding:4px 8px;}' +
+      '.print-doc:not(.theme-minimal) .print-note{background:'+softer+' !important; border-color:'+accent+' !important;}'
+    : '') +
+    (fill==="bold" ?
+      '.print-doc:not(.theme-minimal) .print-head{background:'+accent+' !important; padding:14px !important; border-radius:8px; border-bottom:none !important; color:#fff !important;}' +
+      '.print-doc:not(.theme-minimal) .print-head .print-co-name,.print-doc:not(.theme-minimal) .print-head .print-doc-title{color:#fff !important;}' +
+      '.print-doc:not(.theme-minimal) .print-co-sub,.print-doc:not(.theme-minimal) .print-doc-num{color:#e2e8f0 !important;}' +
+      '.print-doc.theme-dark .print-table thead th{background:'+accent+' !important; color:#fff !important;}' +
+      '.print-doc:not(.theme-minimal) .print-table tfoot td{background:'+accent+' !important; color:#fff !important; border-color:'+accent+' !important;}' +
+      '.print-doc:not(.theme-minimal) .print-row{background:'+softer+'; padding:5px 8px; border-bottom:1px solid '+soft+';}' +
+      '.print-doc:not(.theme-minimal) .print-note{background:'+soft+' !important; border-color:'+accent+' !important;}'
+    : '') +
+    printFrameCss(frame, accent) +
     '.print-table thead th{position:sticky; top:0;}' +
     '.print-table tr{page-break-inside:avoid;}' +
   '</style>';
@@ -7854,18 +7909,45 @@ function openPrintArea(html){
   setTimeout(function(){ window.print(); }, 60);
 }
 /* عناصر طباعة مشتركة: رأس المستند وتذييل التوقيعات */
+const DEFAULT_COMPANY_NAME = "الفردوس للنقل والتوريد";
+const DEFAULT_COMPANY_TAGLINE = "شريك النجاح في النقل والتوريد — التزام بالمواعيد، وأمانة في التعامل";
+function companyDisplayName(company){ return (company && company.name && company.name.trim()) ? company.name.trim() : DEFAULT_COMPANY_NAME; }
+function companyTagline(company){
+  if(company && company.tagline !== undefined && company.tagline !== null && String(company.tagline).trim()==="" && company.taglineSet) return "";
+  return (company && company.tagline && company.tagline.trim()) ? company.tagline.trim() : DEFAULT_COMPANY_TAGLINE;
+}
+const APP_ICON_DATA_URL = "data:image/png;base64,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";
+function printLogoHtml(company, s){
+  const useApp = (s.logoSource||"app") !== "company";
+  if(useApp) return '<img src="'+APP_ICON_DATA_URL+'" style="height:56px; width:56px; object-fit:contain; border-radius:10px;"/>';
+  return '<img src="'+(company.logoDataUrl||DEFAULT_LOGO_DATA_URL)+'" style="height:52px; width:auto; max-width:130px; object-fit:contain;"/>';
+}
 function printHeadHtml(company, title, docNumber){
-  let sub = "للنقل وتوريد الأسمنت";
-  if(company.address) sub += " — " + esc(company.address);
-  if(company.phone) sub += " — هاتف: " + esc(company.phone);
-  if(company.taxId) sub += " — س.ت/ضريبي: " + esc(company.taxId);
-  const logoHtml = '<img src="'+(company.logoDataUrl||DEFAULT_LOGO_DATA_URL)+'" style="height:44px; width:auto; max-width:120px; object-fit:contain;"/>';
-  return '<div class="print-head">' +
-    '<div class="print-co" style="display:flex; align-items:center; gap:10px;">' + logoHtml +
-      '<div><div>الفردوس للنقل والتوريد</div><div class="print-co-sub">'+sub+'</div></div>' +
-    '</div>' +
-    '<div class="print-doc-title">'+esc(title)+'<div class="print-doc-num">رقم: '+esc(docNumber)+' — تاريخ الطباعة: '+fmtDate(todayISO())+'</div></div>' +
-  '</div>';
+  const s = loadPrintSettings();
+  const ovLay = byId("print-layout") ? byId("print-layout").value : "";
+  const layout = ovLay || s.headerLayout || "split";
+  const mode = s.subLine || "none";
+  let sub = "";
+  if(mode==="activity" || mode==="full") sub = "للنقل وتوريد الأسمنت";
+  if(mode==="full"){
+    if(company.address) sub += " — " + esc(company.address);
+    if(company.phone) sub += " — هاتف: " + esc(company.phone);
+    if(company.taxId) sub += " — س.ت/ضريبي: " + esc(company.taxId);
+  }
+  const subHtml = sub ? '<div class="print-co-sub">'+sub+'</div>' : '';
+  const logoHtml = printLogoHtml(company, s);
+  const nameHtml = '<div class="print-co-name">'+esc(companyDisplayName(company))+'</div>' + subHtml;
+  const tag = companyTagline(company);
+  const titleHtml = '<div class="print-doc-title">'+esc(title)+'<div class="print-doc-num">رقم: '+esc(docNumber)+' — تاريخ الطباعة: '+fmtDate(todayISO())+'</div></div>';
+  let head;
+  if(layout==="centername"){
+    head = '<div class="print-head lay-centername">' + '<div>'+logoHtml+'</div>' + '<div class="print-head-name">'+nameHtml+'</div>' + titleHtml + '</div>';
+  }else if(layout==="stack"){
+    head = '<div class="print-head lay-stack">' + logoHtml + '<div class="print-head-name">'+nameHtml+'</div>' + titleHtml + '</div>';
+  }else{
+    head = '<div class="print-head">' + '<div class="print-co" style="display:flex; align-items:center; gap:10px;">' + logoHtml + '<div>'+nameHtml+'</div></div>' + titleHtml + '</div>';
+  }
+  return (tag ? '<div class="print-tagline">'+esc(tag)+'</div>' : '') + head;
 }
 function generateQRDataUrl(text, size){
   if(typeof QRCode === "undefined" || !text) return null;
@@ -9172,6 +9254,8 @@ function renderCompanyInfoPanel(){
   let html = '<div class="form-panel">' +
       '<div style="font-weight:800; font-size:14px; margin-bottom:8px;">🏢 بيانات الشركة (تظهر في رأس المستندات المطبوعة)</div>' +
       '<div class="form-grid cols-3">' +
+        '<div><label class="f-label">اسم الشركة (يظهر في رأس الكشوفات المطبوعة)</label><input class="f-input" id="ci-name" value="'+esc(c.name||DEFAULT_COMPANY_NAME)+'" placeholder="اسم الشركة"/></div>' +
+        '<div style="grid-column:span 2;"><label class="f-label">العبارة الترويجية (تظهر أعلى رأس الكشف — اتركها فارغة لإخفائها)</label><input class="f-input" id="ci-tagline" value="'+esc(c.taglineSet ? (c.tagline||"") : (c.tagline||DEFAULT_COMPANY_TAGLINE))+'" placeholder="مثال: ثقة تمتد على كل طريق"/></div>' +
         '<div><label class="f-label">العنوان</label><input class="f-input" id="ci-address" value="'+esc(c.address||"")+'" placeholder="مثال: القاهرة - مصر"/></div>' +
         '<div><label class="f-label">رقم الهاتف</label><input class="f-input" id="ci-phone" value="'+esc(c.phone||"")+'" placeholder="مثال: 01000000000"/></div>' +
         '<div><label class="f-label">السجل التجاري / الرقم الضريبي</label><input class="f-input" id="ci-tax" value="'+esc(c.taxId||"")+'" placeholder="اختياري"/></div>' +
@@ -9221,9 +9305,79 @@ function removeLogo(){
    للطباعة في البرنامج (كشف الحساب، الكشف المجمع، السندات، عهدة
    السائقين، تحليل المبيعات والمشتريات...) دفعة واحدة، لأنها تُحقن
    مركزيًا داخل openPrintArea() و printSignHtml() اللي بيستخدمهم الجميع */
+/* ألوان جاهزة وأنماط تعبئة الكشوفات المطبوعة */
+const PRINT_PALETTE = [
+  {v:"#0f172a", n:"كحلي داكن"}, {v:"#1d4ed8", n:"أزرق"}, {v:"#0e7490", n:"تركوازي"},
+  {v:"#047857", n:"أخضر"}, {v:"#6d28d9", n:"بنفسجي"}, {v:"#c2410c", n:"برتقالي"},
+  {v:"#9f1239", n:"عنابي"}, {v:"#92400e", n:"بني"}, {v:"#374151", n:"رمادي"}
+];
+function tintColor(hex, amount){
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex||""); if(!m) return "#f1f5f9";
+  const n = parseInt(m[1],16), r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  const mix = function(c){ return Math.round(c + (255-c)*amount); };
+  return "#"+[mix(r),mix(g),mix(b)].map(function(x){return x.toString(16).padStart(2,"0");}).join("");
+}
+function printPaletteOptions(selected, withDefault){
+  let o = withDefault ? '<option value="">حسب إعدادات الطباعة</option>' : '';
+  PRINT_PALETTE.forEach(function(c){ o += '<option value="'+c.v+'" '+(selected===c.v?"selected":"")+'>'+c.n+'</option>'; });
+  return o;
+}
+function printFillOptions(selected, withDefault){
+  const opts = [["none","بدون تعبئة (الشكل الحالي)"],["soft","تعبئة فاتحة (رأس + صفوف + إجمالي)"],["bold","تعبئة كاملة بلون الكشف"]];
+  let o = withDefault ? '<option value="">حسب إعدادات الطباعة</option>' : '';
+  opts.forEach(function(x){ o += '<option value="'+x[0]+'" '+(selected===x[0]?"selected":"")+'>'+x[1]+'</option>'; });
+  return o;
+}
+const PRINT_FRAMES = [
+  ["none","بدون إطار"],["thin","إطار رفيع"],["thick","إطار سميك"],["double","إطار مزدوج"],
+  ["rounded","إطار بحواف دائرية"],["dashed","إطار متقطع"],["dotted","إطار منقّط"],
+  ["ornate","إطار زخرفي (خطين)"],["corners","زوايا فقط"],["shadow","إطار بظل"]
+];
+function printFrameOptions(selected, withDefault){
+  let o = withDefault ? '<option value="">حسب إعدادات الطباعة</option>' : '';
+  PRINT_FRAMES.forEach(function(x){ o += '<option value="'+x[0]+'" '+(selected===x[0]?"selected":"")+'>'+x[1]+'</option>'; });
+  return o;
+}
+function printFrameCss(frame, c){
+  if(!frame || frame==="none") return "";
+  const base = '.print-doc{padding:18px !important; box-sizing:border-box;}';
+  const b = '.print-doc{';
+  switch(frame){
+    case "thin": return base+b+'border:1.5px solid '+c+' !important;}';
+    case "thick": return base+b+'border:5px solid '+c+' !important;}';
+    case "double": return base+b+'border:4px double '+c+' !important;}';
+    case "rounded": return base+b+'border:2.5px solid '+c+' !important; border-radius:16px;}';
+    case "dashed": return base+b+'border:2px dashed '+c+' !important;}';
+    case "dotted": return base+b+'border:3px dotted '+c+' !important;}';
+    case "ornate": return base+b+'border:2px solid '+c+' !important; outline:1px solid '+c+'; outline-offset:4px; margin:6px;}';
+    case "shadow": return base+b+'border:1.5px solid '+c+' !important; box-shadow:5px 5px 0 '+c+'; margin:0 6px 6px 0;}';
+    case "corners": {
+      const g = function(pos, w, h){ return 'linear-gradient('+c+','+c+') '+pos+' / '+w+' '+h+' no-repeat'; };
+      return base+b+'border:none !important; background:' + [
+        g('top left','30px','3px'), g('top left','3px','30px'),
+        g('top right','30px','3px'), g('top right','3px','30px'),
+        g('bottom left','30px','3px'), g('bottom left','3px','30px'),
+        g('bottom right','30px','3px'), g('bottom right','3px','30px')
+      ].join(',') + ' !important;}';
+    }
+  }
+  return "";
+}
+function printLayoutOptions(selected, withDefault){
+  const opts=[["split","الاسم والشعار يمين، وعنوان الكشف يسار (الحالي)"],["centername","الاسم في المنتصف (الشعار يمين، العنوان يسار)"],["stack","الكل في المنتصف (شعار، اسم، ثم عنوان الكشف)"]];
+  let o = withDefault ? '<option value="">حسب إعدادات الطباعة</option>' : '';
+  opts.forEach(function(x){ o += '<option value="'+x[0]+'" '+(selected===x[0]?"selected":"")+'>'+x[1]+'</option>'; });
+  return o;
+}
+function printColorFieldsHtml(){
+  return '<div><label class="f-label">🎨 لون الكشف</label><select class="f-input" id="print-color">'+printPaletteOptions("", true)+'</select></div>' +
+         '<div><label class="f-label">🖌️ تعبئة الكشف بالألوان</label><select class="f-input" id="print-fill">'+printFillOptions("", true)+'</select></div>' +
+         '<div><label class="f-label">🖼️ إطار الكشف</label><select class="f-input" id="print-frame">'+printFrameOptions("", true)+'</select></div>' +
+         '<div><label class="f-label">📐 تنسيق رأس الكشف</label><select class="f-input" id="print-layout">'+printLayoutOptions("", true)+'</select></div>';
+}
 const PRINT_SETTINGS_KEY = "ferdaws-print-settings-v1";
 function loadPrintSettings(){
-  const defaults = { accentColor:"#0f172a", zebra:true, watermark:false, watermarkText:"", showTimestamp:true, showStampBox:false };
+  const defaults = { accentColor:"#0f172a", zebra:true, watermark:false, watermarkText:"", showTimestamp:true, showStampBox:false, fillMode:"none", frameStyle:"none", headerLayout:"split", logoSource:"app", subLine:"none" };
   try{ return Object.assign({}, defaults, JSON.parse(localStorage.getItem(PRINT_SETTINGS_KEY))||{}); }
   catch(e){ return defaults; }
 }
@@ -9234,7 +9388,13 @@ function renderPrintSettingsPanel(){
       '<div style="font-weight:800; font-size:14px; margin-bottom:4px;">🖨️ تنسيق الكشوفات المطبوعة</div>' +
       '<div style="font-size:12px; color:var(--stone-500); margin-bottom:10px;">تُطبَّق هذه الإعدادات تلقائيًا على كل كشف أو مستند تطبعه من أي صفحة في البرنامج.</div>' +
       '<div class="form-grid cols-3">' +
-        '<div><label class="f-label">لون رأس الجدول والتمييز الرئيسي</label><input class="f-input" type="color" id="ps-color" value="'+esc(s.accentColor)+'" style="height:40px; padding:4px;"/></div>' +
+        '<div><label class="f-label">لون رأس الجدول والتمييز الرئيسي</label><input class="f-input" type="color" id="ps-color" value="'+esc(s.accentColor)+'" style="height:40px; padding:4px;"/>' +
+          '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">'+PRINT_PALETTE.map(function(c){return '<button type="button" title="'+c.n+'" onclick="byId(\'ps-color\').value=\''+c.v+'\'" style="width:24px; height:24px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px #cbd5e1; background:'+c.v+'; cursor:pointer;"></button>';}).join("")+'</div></div>' +
+        '<div><label class="f-label">تعبئة الكشف بالألوان</label><select class="f-input" id="ps-fill">'+printFillOptions(s.fillMode||"none", false)+'</select></div>' +
+        '<div><label class="f-label">إطار الكشف (بلون الكشف)</label><select class="f-input" id="ps-frame">'+printFrameOptions(s.frameStyle||"none", false)+'</select></div>' +
+        '<div><label class="f-label">تنسيق رأس الكشف</label><select class="f-input" id="ps-layout">'+printLayoutOptions(s.headerLayout||"split", false)+'</select></div>' +
+        '<div><label class="f-label">شعار الكشف</label><select class="f-input" id="ps-logo"><option value="app" '+((s.logoSource||"app")==="app"?"selected":"")+'>أيقونة التطبيق (AF)</option><option value="company" '+(s.logoSource==="company"?"selected":"")+'>شعار الشركة (المرفوع في بيانات الشركة)</option></select></div>' +
+        '<div><label class="f-label">السطر الصغير تحت اسم الشركة</label><select class="f-input" id="ps-sub"><option value="none" '+((s.subLine||"none")==="none"?"selected":"")+'>بدون</option><option value="activity" '+(s.subLine==="activity"?"selected":"")+'>النشاط فقط (للنقل وتوريد الأسمنت)</option><option value="full" '+(s.subLine==="full"?"selected":"")+'>النشاط + العنوان والهاتف</option></select></div>' +
         '<div><label class="f-label">تظليل صفوف الجدول بالتبادل (Zebra)</label><select class="f-input" id="ps-zebra"><option value="1" '+(s.zebra?"selected":"")+'>مفعّل</option><option value="0" '+(!s.zebra?"selected":"")+'>غير مفعّل</option></select></div>' +
         '<div><label class="f-label">إظهار توقيت الطباعة أسفل المستند</label><select class="f-input" id="ps-timestamp"><option value="1" '+(s.showTimestamp?"selected":"")+'>مفعّل</option><option value="0" '+(!s.showTimestamp?"selected":"")+'>غير مفعّل</option></select></div>' +
         '<div><label class="f-label">صندوق "ختم الشركة" بجانب التوقيعات</label><select class="f-input" id="ps-stamp"><option value="1" '+(s.showStampBox?"selected":"")+'>مفعّل</option><option value="0" '+(!s.showStampBox?"selected":"")+'>غير مفعّل</option></select></div>' +
@@ -9248,6 +9408,11 @@ function renderPrintSettingsPanel(){
 function savePrintSettings(){
   savePrintSettingsObj({
     accentColor: byId("ps-color").value || "#0f172a",
+    fillMode: byId("ps-fill").value || "none",
+    frameStyle: byId("ps-frame").value || "none",
+    headerLayout: byId("ps-layout").value || "split",
+    logoSource: byId("ps-logo").value || "app",
+    subLine: byId("ps-sub").value || "none",
     zebra: byId("ps-zebra").value==="1",
     showTimestamp: byId("ps-timestamp").value==="1",
     showStampBox: byId("ps-stamp").value==="1",
@@ -9328,6 +9493,9 @@ function renderPendingCharts(){
 function saveCompanyInfo(){
   const existing = loadCompanyInfo();
   saveCompanyInfoObj(Object.assign({}, existing, {
+    name: byId("ci-name").value.trim(),
+    tagline: byId("ci-tagline").value.trim(),
+    taglineSet: true,
     address: byId("ci-address").value.trim(),
     phone: byId("ci-phone").value.trim(),
     taxId: byId("ci-tax").value.trim(),
@@ -9592,7 +9760,10 @@ function importBackup(event){
       event.target.value = "";
       return;
     }
-    DB = Object.assign({}, emptyDB, incoming);
+    const prevUsers = DB.users;
+    DB = normalizeDB(Object.assign({}, emptyDB, incoming));
+    /* لو النسخة الاحتياطية قديمة ومفيهاش مستخدمين، نسيب المستخدمين الحاليين بدل ما الدخول يضيع */
+    if(!Array.isArray(incoming.users) || incoming.users.length===0) DB.users = prevUsers;
     migrateAccountCodes();
     seedMissingDefaultAccounts();
     syncAllPartyAccounts();
@@ -10601,7 +10772,7 @@ function printThermalReceipt(mode, a, b){
     const vehicle = r.vehicleNumber || "";
     const routeDesc = registerRouteLabel(r) || "—";
     bodyHtml =
-      '<h2>'+esc(company.name||"الفردوس للنقل والتوريد")+'</h2>' +
+      '<h2>'+esc(companyDisplayName(company))+'</h2>' + (companyTagline(company) ? '<div class="tr-tagline">'+esc(companyTagline(company))+'</div>' : '') +
       '<div class="tr-sub">'+(company.phone?esc(company.phone):"")+'</div>' +
       '<hr/>' +
       '<div>'+(isSales?"إيصال بيع":"إيصال شراء")+' — '+fmtDate(r.date)+'</div>' +
@@ -10622,7 +10793,7 @@ function printThermalReceipt(mode, a, b){
     const r = DB[key].find(x=>x.id===id);
     if(!r) return;
     bodyHtml =
-      '<h2>'+esc(company.name||"الفردوس للنقل والتوريد")+'</h2>' +
+      '<h2>'+esc(companyDisplayName(company))+'</h2>' + (companyTagline(company) ? '<div class="tr-tagline">'+esc(companyTagline(company))+'</div>' : '') +
       '<div class="tr-sub">'+(company.phone?esc(company.phone):"")+'</div>' +
       '<hr/>' +
       '<div>'+(isReceipt?"سند قبض رقم ":"سند صرف رقم ")+esc(r.number)+' — '+fmtDate(r.date)+'</div>' +
