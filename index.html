@@ -627,6 +627,7 @@ const NAV = [
   { id:"salesReg",      label:"كشف المبيعات",          icon:"📦" },
   { id:"receipts",      label:"سند قبض",               icon:"🧾" },
   { id:"payments",      label:"سند صرف",               icon:"💳" },
+  { id:"transfers",     label:"ترحيل بين الحسابات",    icon:"🔀" },
   { id:"quotations",    label:"عروض الأسعار",          icon:"📄" },
   { id:"custody",       label:"عهدة السائقين",         icon:"🚗" },
   { id:"bankRecon",     label:"تسوية البنك",           icon:"🏧" },
@@ -675,7 +676,7 @@ const emptyDB = {
   receipts:[], payments:[], users:[], activityLog:[], drivers:[], custodyRecords:[],
   helpers:[], driverWorkDays:[], helperWorkDays:[], driverAdvances:[], helperAdvances:[], bankReconciliations:[],
   checks:[], vehicles:[], maintenanceLogs:[], fuelLogs:[], approvalRequests:[],
-  recurringTemplates:[], budgets:[], trips:[], quotations:[], trash:[]
+  recurringTemplates:[], budgets:[], trips:[], quotations:[], trash:[], transfers:[]
 };
 /* يضمن إن كل القوائم الأساسية مصفوفات (لو ملف/تخزين تالف فيه null أو قيمة غلط، بدل ما التطبيق يقع) */
 function normalizeDB(db){
@@ -1367,7 +1368,7 @@ const NAV_LABELS_EN = {
   dashboard:"Dashboard", accounts:"Chart of Accounts", journal:"Journal Entries", ledger:"General Ledger",
   trial:"Trial Balance", adjustments:"Adjusting Entries", trialAdjusted:"Adjusted Trial Balance",
   income:"Income Statement", balance:"Balance Sheet", customers:"Customers", suppliers:"Suppliers",
-  purchases:"Purchases Log", salesReg:"Sales Log", receipts:"Receipt Voucher", payments:"Payment Voucher",
+  purchases:"Purchases Log", salesReg:"Sales Log", receipts:"Receipt Voucher", payments:"Payment Voucher", transfers:"Account Transfers",
   custody:"Driver Custody", analysis:"Analysis & Reports", statement:"Account Statement", consolidated:"Consolidated Statement",
   tasbih:"Tasbih & Azkar", sync:"Device Sync", users:"User Management", activityLog:"Activity Log", backup:"Backup",
 };
@@ -2333,6 +2334,7 @@ function sourceLabel(type){
     : type==="purchases" ? "من كشف المشتريات"
     : type==="receipt" ? "من سند قبض"
     : type==="payment" ? "من سند صرف"
+    : type==="transfer" ? "من ترحيل بين حسابات"
     : type==="custody" ? "من عهدة سائق"
     : type==="workDays" ? "من أجر أيام عمل"
     : type==="advance" ? "من سلفة/مسحوبات"
@@ -2485,6 +2487,7 @@ function renderTab(tab){
     case "salesReg": return renderRegister("sales");
     case "receipts": return renderVouchers("receipt");
     case "payments": return renderVouchers("payment");
+    case "transfers": return renderTransfers();
     case "quotations": return renderQuotations();
     case "custody": return renderCustody();
     case "bankRecon": return renderBankRecon();
@@ -2928,6 +2931,31 @@ function openEntryForm(isAdjustment, id){
   }
   render();
 }
+/* تنبيه: لو القيد اليدوي فيه حساب فرعي لعميل/مورد، نقترح استخدام قسم "ترحيل بين الحسابات" لأنه أنسب */
+function entryPartyAccountsInLines(lines){
+  const found = [];
+  (lines||[]).forEach(function(l){
+    if(!l.accountId) return;
+    const a = DB.accounts.find(x=>x.id===l.accountId);
+    if(a && (a.partyKind==="customers" || a.partyKind==="suppliers") && found.indexOf(a)===-1) found.push(a);
+  });
+  return found;
+}
+function entryPartyWarningHtml(lines){
+  const accs = entryPartyAccountsInLines(lines);
+  if(!accs.length) return "";
+  return '<div style="margin-top:10px; background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:10px; font-size:12.5px; line-height:1.8;">' +
+    '<div style="font-weight:800; color:#92400e;">⚠️ القيد يمس حساب عميل/مورد فرعي: '+accs.map(a=>esc(a.name)).join("، ")+'</div>' +
+    '<div style="color:#57534e;">لنقل مبلغ بين العملاء أو الموردين الأفضل استخدام قسم <b>🔀 ترحيل بين الحسابات</b>: بيعدّل الكشف والرصيد مباشرة، ويحافظ على تطابق حساب العملاء/الموردين الرئيسي مع مجموع الكشوف، وبيعرض الرصيد قبل وبعد. القيد اليدوي هنا بيتسجّل على الحساب الفرعي فقط.</div>' +
+    '<button class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="goTab(\'transfers\'); openTransferForm();">🔀 افتح الترحيل بين الحسابات</button>' +
+  '</div>';
+}
+function updateEntryPartyWarning(){
+  const el = byId("entry-party-warn"); if(!el) return;
+  const lines = [];
+  document.querySelectorAll(".entry-line-row").forEach(function(row){ lines.push({accountId: row.querySelector(".line-acc").value}); });
+  el.innerHTML = entryPartyWarningHtml(lines);
+}
 function renderEntryForm(){
   const f = ui.entryForm;
   const accOptions = DB.accounts.map(a=>'<option value="'+a.id+'">'+esc(a.code+" - "+a.name)+'</option>').join("");
@@ -2967,6 +2995,7 @@ function renderEntryForm(){
         '<button class="btn btn-ghost btn-sm" onclick="entryAddLine()">➕ إضافة سطر</button>' +
         '<div id="entry-totals" class="num" style="font-size:12px; font-weight:700; color:'+(balanced?"#059669":"#e11d48")+';">مدين: '+money(totalDebit)+' — دائن: '+money(totalCredit)+'</div>' +
       '</div>' +
+      '<div id="entry-party-warn">'+entryPartyWarningHtml(f.lines)+'</div>' +
       '<div class="form-actions">' +
         '<button class="btn btn-primary" id="entry-save-btn" '+(balanced?"":"disabled")+' onclick="saveEntryForm()">✔ حفظ القيد</button>' +
         '<button class="btn btn-ghost" onclick="ui.entryForm=null; render();">✕ إلغاء</button>' +
@@ -3031,6 +3060,7 @@ function entryLineChanged(){
   }
   const btn = byId("entry-save-btn");
   if(btn) btn.disabled = !balanced;
+  updateEntryPartyWarning();
 }
 function saveEntryForm(){
   if(!canEditTab(ui.tab)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
@@ -3040,6 +3070,8 @@ function saveEntryForm(){
   const totalCredit = f.lines.reduce((s,l)=>s+(Number(l.credit)||0),0);
   if(!(Math.abs(totalDebit-totalCredit)<0.005 && totalDebit>0)){ alert("القيد غير متوازن"); return; }
   if(checkPeriodLock(f.date, "حفظ هذا القيد")) return;
+  const partyAccs = entryPartyAccountsInLines(f.lines);
+  if(partyAccs.length && !confirm("⚠️ هذا القيد يمس حساب عميل/مورد فرعي ("+partyAccs.map(a=>a.name).join("، ")+").\nلنقل مبلغ بين العملاء أو الموردين يُفضَّل استخدام قسم \"ترحيل بين الحسابات\" بدل القيد اليدوي.\n\nهل تريد حفظ القيد اليدوي رغم ذلك؟")) return;
   const cleanLines = f.lines.filter(l=>l.accountId && (Number(l.debit)||Number(l.credit)));
   if(f.id){
     const idx = DB.entries.findIndex(e=>e.id===f.id);
@@ -3283,11 +3315,25 @@ function performYearEndClosing(){
 /* ======================================================================
    7) قائمة المركز المالي
    ====================================================================== */
+/* حسابات العملاء والموردين الفرعية: تظهر في المركز المالي كإجمالي واحد فقط (بدون أسماء)، مع زر لعرض التفاصيل عند الحاجة */
+function bsIsCollapsedGroup(g){ return (g.id==="party_customers" || g.id==="party_suppliers") && !ui.bsShowPartyDetails; }
+function bsGroupBodyHtml(g){
+  let h = "";
+  if(bsIsCollapsedGroup(g)){
+    h += '<div class="balance-row"><span>عدد الحسابات الفرعية</span><span class="num">'+g.items.length+'</span></div>';
+  }else{
+    g.items.forEach(r => h += '<div class="balance-row"><span>'+esc(r.account.name)+'</span><span class="num">'+money(r.amount)+'</span></div>');
+  }
+  h += '<div class="balance-row" style="font-weight:700; border-top:1px dashed var(--stone-300);"><span>إجمالي '+esc(g.label)+'</span><span class="num">'+money(g.total)+'</span></div>';
+  return h;
+}
+function toggleBsPartyDetails(){ ui.bsShowPartyDetails = !ui.bsShowPartyDetails; render(); }
 function renderBalance(){
   const bs = computeMath().bsPost;
   const totalEquityAndLiab = bs.totalLiabilities + bs.totalEquity;
   const isBalanced = Math.abs(bs.totalAssets - totalEquityAndLiab) < 0.001;
   let html = sectionHead("🏦","قائمة المركز المالي","الأصول مقابل الخصوم وحقوق الملكية في تاريخ معين");
+  html += '<div style="margin-bottom:10px;"><button class="btn btn-ghost btn-sm" onclick="toggleBsPartyDetails()">'+(ui.bsShowPartyDetails?"🙈 إخفاء أسماء العملاء والموردين الفرعية":"👁️ عرض أسماء العملاء والموردين الفرعية")+'</button></div>';
 
   html += '<div class="balance-box" style="max-width:none; text-align:center; background:var(--stone-50); margin-bottom:16px;">' +
     '<div style="font-size:12px; font-weight:800; color:var(--stone-500); margin-bottom:8px;">معادلة الميزانية (المعادلة المحاسبية الأساسية)</div>' +
@@ -3308,8 +3354,7 @@ function renderBalance(){
   html += '<div style="font-size:13px; font-weight:800; color:var(--teal-800); margin-bottom:6px;">الأصول</div>';
   bs.assetGroups.forEach(g => {
     html += '<div style="font-size:11px; font-weight:800; color:var(--stone-500); margin:8px 0 3px;">'+esc(g.label)+'</div>';
-    g.items.forEach(r => html += '<div class="balance-row"><span>'+esc(r.account.name)+'</span><span class="num">'+money(r.amount)+'</span></div>');
-    html += '<div class="balance-row" style="font-weight:700; border-top:1px dashed var(--stone-300);"><span>إجمالي '+esc(g.label)+'</span><span class="num">'+money(g.total)+'</span></div>';
+    html += bsGroupBodyHtml(g);
   });
   html += '<div class="balance-row total"><span>إجمالي الأصول</span><span class="num">'+money(bs.totalAssets)+'</span></div>';
   html += '</div>';
@@ -3318,8 +3363,7 @@ function renderBalance(){
   html += '<div style="font-size:13px; font-weight:800; color:var(--amber-800); margin-bottom:6px;">الخصوم</div>';
   bs.liabilityGroups.forEach(g => {
     html += '<div style="font-size:11px; font-weight:800; color:var(--stone-500); margin:8px 0 3px;">'+esc(g.label)+'</div>';
-    g.items.forEach(r => html += '<div class="balance-row"><span>'+esc(r.account.name)+'</span><span class="num">'+money(r.amount)+'</span></div>');
-    html += '<div class="balance-row" style="font-weight:700; border-top:1px dashed var(--stone-300);"><span>إجمالي '+esc(g.label)+'</span><span class="num">'+money(g.total)+'</span></div>';
+    html += bsGroupBodyHtml(g);
   });
   html += '<div class="balance-row total"><span>إجمالي الخصوم</span><span class="num">'+money(bs.totalLiabilities)+'</span></div>';
 
@@ -7705,6 +7749,46 @@ function buildStatementRows(kind, partyId){
     });
   });
 
+  /* قيود اليومية اليدوية (وقيود القوالب المتكررة وتعديلات التسوية البنكية) اللي بتمس الحساب الفرعي للعميل/المورد:
+     كانت بتتسجل في دفتر اليومية والأستاذ بس ومش بتظهر في كشف حسابه ولا في رصيده. أما القيود التلقائية
+     (مبيعات/مشتريات/سندات/أرصدة افتتاحية/ترحيل) فمحسوبة أصلًا من مصادرها فمش بنكررها هنا. */
+  if(party){
+    const acctIds = {};
+    if(party.accountId) acctIds[party.accountId] = true;
+    DB.accounts.forEach(a=>{ if(a.partyKind===kind && a.partyId===partyId) acctIds[a.id] = true; });
+    (DB.entries||[]).forEach(e=>{
+      if(e.autoGenerated && e.sourceType!=="recurring" && e.sourceType!=="bankRecon") return;
+      let d = 0, c = 0;
+      (e.lines||[]).forEach(l=>{ if(acctIds[l.accountId]){ d += Number(l.debit)||0; c += Number(l.credit)||0; } });
+      if(!d && !c) return;
+      rows.push({
+        date:e.date,
+        desc:"قيد يومية رقم "+esc0(e.entryNumber)+(e.description?" - "+e.description:""),
+        quantity:null, unitPrice:null,
+        debit:d, credit:c,
+        type:"journal",
+      });
+    });
+  }
+
+  (DB.transfers||[]).forEach(t=>{
+    const isFrom = t.fromKind===kind && t.fromId===partyId;
+    const isTo = t.toKind===kind && t.toId===partyId;
+    if(!isFrom && !isTo) return;
+    const amt = Number(t.amount)||0;
+    const side = transferRowSide(t.fromKind, t.toKind, isFrom ? "from" : "to");
+    const otherKind = isFrom ? t.toKind : t.fromKind;
+    const other = (DB[otherKind]||[]).find(x=>x.id===(isFrom ? t.toId : t.fromId));
+    rows.push({
+      date:t.date,
+      desc:"ترحيل رقم "+esc0(t.number)+(isFrom?" إلى ":" من ")+(otherKind==="customers"?"العميل ":"المورد ")+(other?other.name:"—")+(t.description?" - "+t.description:""),
+      quantity:null, unitPrice:null,
+      debit: side==="debit" ? amt : 0,
+      credit: side==="credit" ? amt : 0,
+      type: "transfer",
+    });
+  });
+
   rows.sort((a,b)=> a.date<b.date?-1 : a.date>b.date?1 : 0);
   let running = 0;
   return rows.map((r,i)=>{
@@ -9031,6 +9115,236 @@ function printVoucher(type, id){
   openPrintArea(html);
 }
 
+
+/* ======================================================================
+   ترحيل بين الحسابات (عميل↔عميل، مورد↔مورد، عميل↔مورد)
+   القاعدة المحاسبية: "من" يُقيَّد دائنًا و"إلى" يُقيَّد مدينًا (على حساب العملاء/الموردين)،
+   ماعدا (مورد ← مورد) فالعكس: رصيد المورد "من" ينقص ورصيد المورد "إلى" يزيد.
+   - عميل ← عميل: رصيد الأول ينقص والثاني يزيد (نقل مديونية).
+   - مورد ← مورد: رصيد الأول (المستحق له) ينقص والثاني يزيد (نقل مستحقات).
+   - عميل ← مورد: مقاصة — رصيد العميل ينقص ومستحقات المورد تنقص بنفس المبلغ.
+   - مورد ← عميل: عكس المقاصة — مستحقات المورد تزيد ومديونية العميل تزيد.
+   ====================================================================== */
+function transferRowSide(fromKind, toKind, role){
+  let credit = (role==="from");
+  if(fromKind==="suppliers" && toKind==="suppliers") credit = !credit;
+  return credit ? "credit" : "debit";
+}
+function transferBalanceDelta(kind, side, amt){
+  /* أثر الصف على رصيد الكشف: العملاء مدين−دائن، الموردون دائن−مدين */
+  if(kind==="customers") return side==="debit" ? amt : -amt;
+  return side==="credit" ? amt : -amt;
+}
+function transferControlAccount(kind){
+  return DB.accounts.find(a=>a.code===(kind==="customers" ? "10003" : "20001")) || null;
+}
+function buildTransferLines(t){
+  const amt = Number(t.amount)||0;
+  if(!amt || t.fromKind===t.toKind) return []; /* نفس النوع: لا أثر على حساب العملاء/الموردين الإجمالي */
+  const fromAcc = transferControlAccount(t.fromKind), toAcc = transferControlAccount(t.toKind);
+  if(!fromAcc || !toAcc) return [];
+  return [{accountId:toAcc.id, debit:amt, credit:0}, {accountId:fromAcc.id, debit:0, credit:amt}];
+}
+function removeTransferEntry(id){
+  DB.entries = DB.entries.filter(e=>!(e.autoGenerated && e.sourceType==="transfer" && e.sourceId===id));
+}
+function upsertTransferEntry(t){
+  removeTransferEntry(t.id);
+  const lines = buildTransferLines(t);
+  if(!lines.length) return;
+  const a = (DB[t.fromKind]||[]).find(x=>x.id===t.fromId), b = (DB[t.toKind]||[]).find(x=>x.id===t.toId);
+  pushEntry({
+    id: uid("e"), date: t.date,
+    description: "ترحيل رقم "+t.number+": من "+(t.fromKind==="customers"?"عميل ":"مورد ")+(a?a.name:"")+" إلى "+(t.toKind==="customers"?"عميل ":"مورد ")+(b?b.name:"")+(t.description?" ("+t.description+")":""),
+    isAdjustment:false, autoGenerated:true, sourceType:"transfer", sourceId:t.id, lines,
+  });
+}
+function transferPartyName(kind, id){
+  const p = (DB[kind]||[]).find(x=>x.id===id);
+  return p ? p.name : "—";
+}
+function transferKindLabel(kind){ return kind==="customers" ? "عميل" : "مورد"; }
+
+function openTransferForm(id){
+  if(id){
+    const t = DB.transfers.find(x=>x.id===id); if(!t) return;
+    ui.transferForm = Object.assign({}, t, {amount:String(t.amount)});
+  }else{
+    ui.transferForm = {id:null, date:todayISO(), fromKind:"suppliers", fromId:"", toKind:"suppliers", toId:"", amount:"", description:""};
+  }
+  render();
+}
+function syncTransferFormFromDOM(){
+  const f = ui.transferForm; if(!f) return;
+  ["date","fromKind","fromId","toKind","toId","amount","description"].forEach(function(k){
+    const el = byId("tf-"+k); if(el) f[k] = el.value;
+  });
+}
+function transferFormChanged(resetFrom, resetTo){
+  syncTransferFormFromDOM();
+  const f = ui.transferForm;
+  if(resetFrom) f.fromId = "";
+  if(resetTo) f.toId = "";
+  render();
+}
+function transferPreviewHtml(f){
+  const amt = Number(f.amount)||0;
+  if(!f.fromId || !f.toId || !amt) return '<div style="font-size:12px; color:var(--stone-500);">اختر الحسابين وأدخل المبلغ لعرض أثر الترحيل على الأرصدة.</div>';
+  if(f.fromKind===f.toKind && f.fromId===f.toId) return '<div style="font-size:12px; color:#e11d48; font-weight:700;">⚠️ لا يمكن الترحيل من حساب إلى نفسه.</div>';
+  const sideFrom = transferRowSide(f.fromKind, f.toKind, "from"), sideTo = transferRowSide(f.fromKind, f.toKind, "to");
+  /* لو بنعدّل ترحيل محفوظ، نحسب الرصيد الحالي بدونه */
+  const exclude = f.id ? DB.transfers.find(x=>x.id===f.id) : null;
+  function bal(kind, id){
+    let b = partyBalance(kind, id);
+    if(exclude){
+      if(exclude.fromKind===kind && exclude.fromId===id) b -= transferBalanceDelta(kind, transferRowSide(exclude.fromKind, exclude.toKind,"from"), Number(exclude.amount)||0);
+      if(exclude.toKind===kind && exclude.toId===id) b -= transferBalanceDelta(kind, transferRowSide(exclude.fromKind, exclude.toKind,"to"), Number(exclude.amount)||0);
+    }
+    return b;
+  }
+  const bFrom = bal(f.fromKind, f.fromId), bTo = bal(f.toKind, f.toId);
+  const aFrom = bFrom + transferBalanceDelta(f.fromKind, sideFrom, amt);
+  const aTo = bTo + transferBalanceDelta(f.toKind, sideTo, amt);
+  function line(kind, id, before, after){
+    return '<div class="balance-row"><span>'+transferKindLabel(kind)+': <b>'+esc(transferPartyName(kind,id))+'</b></span>' +
+      '<span class="num">'+money(Math.abs(before))+' ('+partyStatusText(kind,before)+') ← <b>'+money(Math.abs(after))+' ('+partyStatusText(kind,after)+')</b></span></div>';
+  }
+  let note = "";
+  if(f.fromKind!==f.toKind){
+    note = f.fromKind==="customers"
+      ? "مقاصة: ما على العميل لنا يُسدَّد من مستحقات المورد، فيقل رصيد الاثنين بنفس المبلغ، ويُنشأ قيد يومية تلقائي."
+      : "عكس المقاصة: تزيد مستحقات المورد ويزيد ما على العميل بنفس المبلغ، ويُنشأ قيد يومية تلقائي.";
+  }else{
+    note = "ينقص رصيد الحساب الأول ويزيد رصيد الحساب الثاني بنفس المبلغ (بدون قيد يومية لأن الإجمالي لا يتغير).";
+  }
+  let warn = "";
+  if(((f.fromKind==="customers" && sideFrom==="credit") || (f.fromKind==="suppliers" && sideFrom==="debit")) && aFrom < -0.001){
+    warn = '<div style="color:#b45309; font-weight:700; font-size:12px; margin-top:6px;">⚠️ المبلغ أكبر من الرصيد الحالي للحساب الأول — سينقلب اتجاه رصيده.</div>';
+  }
+  return '<div style="background:#f8fafc; border:1px solid var(--stone-200); border-radius:8px; padding:10px;">' +
+    '<div style="font-weight:800; font-size:12.5px; margin-bottom:6px;">أثر الترحيل على الأرصدة (قبل ← بعد)</div>' +
+    line(f.fromKind,f.fromId,bFrom,aFrom) + line(f.toKind,f.toId,bTo,aTo) +
+    '<div style="font-size:11.5px; color:var(--stone-500); margin-top:6px;">'+note+'</div>' + warn + '</div>';
+}
+function renderTransferForm(){
+  const f = ui.transferForm;
+  function partySelect(idKey, kindKey){
+    return '<select class="f-input" id="tf-'+idKey+'" onchange="transferFormChanged(false,false)"><option value="">اختر الحساب</option>' +
+      (DB[f[kindKey]]||[]).map(p=>'<option value="'+p.id+'" '+(p.id===f[idKey]?"selected":"")+'>'+esc(p.name)+'</option>').join("") + '</select>';
+  }
+  function kindSelect(kindKey, resetFrom, resetTo){
+    return '<select class="f-input" id="tf-'+kindKey+'" onchange="transferFormChanged('+resetFrom+','+resetTo+')">' +
+      '<option value="customers" '+(f[kindKey]==="customers"?"selected":"")+'>عميل</option>' +
+      '<option value="suppliers" '+(f[kindKey]==="suppliers"?"selected":"")+'>مورد</option></select>';
+  }
+  return '<div class="form-panel">' +
+    '<div style="font-weight:800; margin-bottom:8px;">'+(f.id?"✏️ تعديل ترحيل":"🔀 ترحيل جديد")+'</div>' +
+    '<div class="form-grid cols-3">' +
+      '<div><label class="f-label">التاريخ</label><input class="f-input" type="date" id="tf-date" value="'+esc(f.date)+'"/></div>' +
+      '<div><label class="f-label">المبلغ</label><input class="f-input" type="number" step="0.01" id="tf-amount" value="'+esc(f.amount)+'" oninput="syncTransferFormFromDOM(); byId(\'tf-preview\').innerHTML = transferPreviewHtml(ui.transferForm);"/></div>' +
+      '<div><label class="f-label">البيان (اختياري)</label><input class="f-input" id="tf-description" value="'+esc(f.description||"")+'" placeholder="سبب الترحيل"/></div>' +
+      '<div><label class="f-label">من — نوع الحساب</label>'+kindSelect("fromKind",true,false)+'</div>' +
+      '<div style="grid-column:span 2;"><label class="f-label">من — الحساب</label>'+partySelect("fromId","fromKind")+'</div>' +
+      '<div><label class="f-label">إلى — نوع الحساب</label>'+kindSelect("toKind",false,true)+'</div>' +
+      '<div style="grid-column:span 2;"><label class="f-label">إلى — الحساب</label>'+partySelect("toId","toKind")+'</div>' +
+    '</div>' +
+    '<div id="tf-preview" style="margin-top:10px;">'+transferPreviewHtml(f)+'</div>' +
+    '<div class="form-actions">' +
+      '<button class="btn btn-primary" onclick="saveTransferForm()">✔ حفظ الترحيل</button>' +
+      '<button class="btn btn-ghost" onclick="ui.transferForm=null; render();">✕ إلغاء</button>' +
+    '</div></div>';
+}
+function saveTransferForm(){
+  if(!canEditTab("transfers")){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  syncTransferFormFromDOM();
+  const f = ui.transferForm; if(!f) return;
+  const amount = Number(f.amount)||0;
+  if(!f.fromId || !f.toId){ alert("اختر الحساب (من) والحساب (إلى)"); return; }
+  if(f.fromKind===f.toKind && f.fromId===f.toId){ alert("لا يمكن الترحيل من حساب إلى نفسه"); return; }
+  if(!(amount>0)){ alert("أدخل مبلغًا أكبر من صفر"); return; }
+  if(!f.date){ alert("اختر التاريخ"); return; }
+  if(checkPeriodLock(f.date, "حفظ هذا الترحيل")) return;
+  if(f.id){
+    const old = DB.transfers.find(x=>x.id===f.id);
+    if(old && checkPeriodLock(old.date, "تعديل هذا الترحيل")) return;
+  }
+  const record = {
+    id: f.id, number: f.number, date: f.date, fromKind: f.fromKind, fromId: f.fromId,
+    toKind: f.toKind, toId: f.toId, amount, description: (f.description||"").trim(),
+  };
+  if(f.id){
+    const idx = DB.transfers.findIndex(x=>x.id===f.id);
+    record.number = DB.transfers[idx].number;
+    DB.transfers[idx] = record;
+    logActivity("تعديل ترحيل بين حسابات", transferPartyName(f.fromKind,f.fromId)+" ← "+transferPartyName(f.toKind,f.toId)+" — "+money(amount));
+  }else{
+    DB.nextTransferNumber = (DB.nextTransferNumber||0) + 1;
+    record.number = DB.nextTransferNumber;
+    record.id = uid("tf");
+    DB.transfers.push(record);
+    logActivity("إضافة ترحيل بين حسابات", transferPartyName(f.fromKind,f.fromId)+" ← "+transferPartyName(f.toKind,f.toId)+" — "+money(amount));
+  }
+  upsertTransferEntry(record);
+  ui.transferForm = null;
+  saveDB(); render();
+}
+function deleteTransfer(id){
+  if(!canEditTab("transfers")){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const t = DB.transfers.find(x=>x.id===id); if(!t) return;
+  if(checkPeriodLock(t.date, "حذف هذا الترحيل")) return;
+  if(!confirm("هل تريد حذف هذا الترحيل؟ ستعود الأرصدة كما كانت قبله، ويُحذف القيد المرتبط به.")) return;
+  moveToTrash("transfers", t, "رقم "+t.number+" — "+money(t.amount));
+  DB.transfers = DB.transfers.filter(x=>x.id!==id);
+  removeTransferEntry(id);
+  logActivity("حذف ترحيل بين حسابات", "رقم "+t.number);
+  saveDB(); render();
+}
+function printTransfer(id){
+  const t = DB.transfers.find(x=>x.id===id); if(!t) return;
+  const company = loadCompanyInfo();
+  const html =
+    '<div class="print-doc">' +
+      printHeadHtml(company, "إشعار ترحيل بين حسابات", esc(t.number)) +
+      '<div class="print-row"><span>التاريخ:</span><b>'+fmtDate(t.date)+'</b></div>' +
+      '<div class="print-row"><span>من حساب '+transferKindLabel(t.fromKind)+':</span><b>'+esc(transferPartyName(t.fromKind,t.fromId))+'</b></div>' +
+      '<div class="print-row"><span>إلى حساب '+transferKindLabel(t.toKind)+':</span><b>'+esc(transferPartyName(t.toKind,t.toId))+'</b></div>' +
+      '<div class="print-row"><span>مبلغ وقدره:</span><b>'+money(t.amount)+' جنيه مصري</b></div>' +
+      '<div class="print-row"><span>وذلك عن:</span><b>'+esc(t.description||"—")+'</b></div>' +
+      printSignHtml("توقيع المحاسب") +
+    '</div>';
+  openPrintArea(html);
+}
+function renderTransfers(){
+  ui.transferFilter = ui.transferFilter || "";
+  let html = sectionHead("🔀","ترحيل بين الحسابات",
+    "نقل مبلغ من حساب عميل أو مورد إلى حساب عميل أو مورد آخر (عميل↔عميل، مورد↔مورد، عميل↔مورد) — يظهر في كشف حساب الطرفين",
+    '<button class="btn btn-primary" onclick="openTransferForm()">➕ ترحيل جديد</button>');
+  if(ui.transferForm) html += renderTransferForm();
+  html += '<div style="width:260px; margin-bottom:12px;"><label class="f-label">🔍 بحث (اسم/بيان/رقم)</label><input class="f-input" value="'+esc(ui.transferFilter)+'" oninput="ui.transferFilter=this.value; updateTransfersBody();"/></div>';
+  html += '<div id="transfers-body">'+renderTransfersBody()+'</div>';
+  return html;
+}
+function updateTransfersBody(){ const el = byId("transfers-body"); if(el) el.innerHTML = renderTransfersBody(); }
+function renderTransfersBody(){
+  const term = (ui.transferFilter||"").trim().toLowerCase();
+  let list = (DB.transfers||[]).slice().sort((a,b)=> a.date<b.date?1:(a.date>b.date?-1:(b.number-a.number)));
+  if(term){
+    list = list.filter(t=>
+      (transferPartyName(t.fromKind,t.fromId)+" "+transferPartyName(t.toKind,t.toId)+" "+(t.description||"")+" "+t.number).toLowerCase().indexOf(term)!==-1);
+  }
+  if(!list.length) return '<div class="empty-state">لا توجد عمليات ترحيل'+(term?" مطابقة للبحث":" بعد")+'.</div>';
+  const canEdit = canEditTab("transfers");
+  return '<div class="table-wrap"><table><thead><tr><th>الرقم</th><th>التاريخ</th><th>من</th><th>إلى</th><th class="tleft">المبلغ</th><th>البيان</th><th></th></tr></thead><tbody>' +
+    list.map(t=>'<tr><td>'+esc(t.number)+'</td><td>'+fmtDate(t.date)+'</td>' +
+      '<td>'+transferKindLabel(t.fromKind)+': '+esc(transferPartyName(t.fromKind,t.fromId))+'</td>' +
+      '<td>'+transferKindLabel(t.toKind)+': '+esc(transferPartyName(t.toKind,t.toId))+'</td>' +
+      '<td class="tleft num">'+money(t.amount)+'</td><td>'+esc(t.description||"—")+'</td>' +
+      '<td style="white-space:nowrap;"><button class="icon-btn" title="طباعة" onclick="printTransfer(\''+t.id+'\')">🖨️</button>' +
+        (canEdit ? '<button class="icon-btn" title="تعديل" onclick="openTransferForm(\''+t.id+'\')">✏️</button><button class="icon-btn danger" title="حذف" onclick="deleteTransfer(\''+t.id+'\')">🗑️</button>' : '') +
+      '</td></tr>').join("") +
+    '</tbody></table></div>';
+}
+
 /* ======================================================================
    12) النسخ الاحتياطي (تصدير / استيراد كل البيانات كملف JSON)
    ====================================================================== */
@@ -9862,13 +10176,13 @@ function undoToastRestoreBatch(batchId){
 function trashKindLabel(kind){
   const map = { entries:"قيد يومية", accounts:"حساب", customers:"عميل", suppliers:"مورد",
     sales:"عملية بيع", purchases:"عملية شراء", receipts:"سند قبض", payments:"سند صرف",
-    checks:"شيك", drivers:"سائق", helpers:"مساعد", vehicles:"مركبة" };
+    checks:"شيك", drivers:"سائق", helpers:"مساعد", vehicles:"مركبة", transfers:"ترحيل بين حسابات" };
   return map[kind] || kind;
 }
 function trashKindToTab(kind){
   const map = {entries:"journal", accounts:"accounts", customers:"customers", suppliers:"suppliers",
     sales:"salesReg", purchases:"purchases", receipts:"receipts", payments:"payments",
-    checks:"checks", drivers:"custody", helpers:"custody", vehicles:"fleet"};
+    checks:"checks", drivers:"custody", helpers:"custody", vehicles:"fleet", transfers:"transfers"};
   return map[kind] || kind;
 }
 function restoreTrashItem(item){
@@ -9882,6 +10196,7 @@ function restoreTrashItem(item){
   if(item.kind==="receipts" || item.kind==="payments"){
     upsertVoucherEntry(item.record, item.kind==="receipts"?"receipt":"payment");
   }
+  if(item.kind==="transfers"){ upsertTransferEntry(item.record); }
   if(PARTY_ACCOUNT_META[item.kind]){
     // عند استرجاع عميل/مورد/سائق/مساعد من سلة المحذوفات، أعد ربطه بحسابه الفرعي
     // في شجرة الحسابات (يعيد إحياء الحساب القديم إن كان لا يزال موجودًا، أو ينشئ حسابًا جديدًا)
