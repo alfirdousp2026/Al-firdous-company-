@@ -58,6 +58,10 @@
   .nav-icon{font-size:15px; width:18px; text-align:center;}
   .sidebar-foot{padding:12px 16px; border-top:1px solid rgba(255,255,255,.08); font-size:11px; color:#94a3b8; line-height:1.6;}
   .save-indicator{margin-top:4px; color:#5eead4; font-weight:600;}
+  .fab-save{position:fixed; z-index:45; left:16px; bottom:calc(78px + env(safe-area-inset-bottom)); display:flex; align-items:center; gap:6px; background:var(--brand-orange); color:#fff; border:none; border-radius:999px; padding:13px 20px; font-weight:800; font-size:14.5px; font-family:inherit; cursor:pointer; box-shadow:0 6px 18px rgba(0,0,0,.30);}
+  .fab-save:active{transform:scale(.97);}
+  @media (min-width:860px){ .fab-save{bottom:24px; left:24px;} }
+  @media print{ .fab-save{display:none !important;} }
 
   /* ===== Bottom nav (mobile) ===== */
   .bottom-nav{
@@ -701,13 +705,19 @@ let saveTimer = null;
 /* تقدير حجم كل بيانات البرنامج المخزَّنة محليًا، ونسبتها من الحد الشائع
    للمتصفحات (~5 ميجابايت لكل تطبيق) — عشان ننبّه المستخدم قبل ما يوصل
    لمرحلة فشل الحفظ فجأة */
+/* طلب "تخزين دائم" من المتصفح عشان ما يمسحش بيانات التطبيق تلقائيًا لما مساحة الجهاز تقل */
+try{ if(navigator.storage && navigator.storage.persist){ navigator.storage.persist().catch(function(){}); } }catch(e){}
 function getDBSizeInfo(){
   let bytes = 0;
   try{ bytes = new Blob([JSON.stringify(DB)]).size; }
   catch(e){ bytes = JSON.stringify(DB).length; }
   const limitBytes = 5*1024*1024;
   const percent = Math.min(100, Math.round((bytes/limitBytes)*1000)/10);
-  return { bytes, mb: bytes/1024/1024, percent, limitBytes };
+  let attachBytes = 0, attachCount = 0;
+  (DB.entries||[]).forEach(function(e){
+    if(e && e.attachment && e.attachment.dataUrl){ attachBytes += e.attachment.dataUrl.length; attachCount++; }
+  });
+  return { bytes, mb: bytes/1024/1024, percent, limitBytes, attachBytes, attachMb: attachBytes/1024/1024, attachCount };
 }
 function updateStorageWarningBanner(){
   const el = byId("storageWarningBanner");
@@ -737,6 +747,13 @@ function saveDB(){
     const el2 = byId("saveIndicatorMobile"); if(el2) el2.textContent = "✓ " + t;
   }catch(e){
     const el1 = byId("saveIndicator"); if(el1) el1.textContent = "⚠️ تعذر الحفظ";
+    const el2 = byId("saveIndicatorMobile"); if(el2) el2.textContent = "⚠️";
+    /* تنبيه واضح (مرة كل دقيقة بحد أقصى) بدل رسالة صغيرة قد تفوت المستخدم */
+    const now = Date.now();
+    if(!saveDB._lastAlertAt || now - saveDB._lastAlertAt > 60000){
+      saveDB._lastAlertAt = now;
+      alert("⚠️ تعذّر حفظ بياناتك على هذا الجهاز — غالبًا مساحة التخزين امتلأت.\n\nالبيانات لسه ظاهرة قدامك لكنها غير محفوظة محليًا. اعمل الآتي فورًا:\n١) افتح «نسخة احتياطية» ونزّل نسخة الآن.\n٢) احذف مرفقات القيود الكبيرة أو الأقدم.\n\n(لو المزامنة شغالة فالتعديلات بتترفع للسيرفر.)");
+    }
   }
   updateStorageWarningBanner();
   if(!syncState.applyingRemote) pushToCloud();
@@ -2600,13 +2617,24 @@ function card(title, value, sub, tone){
 /* ======================================================================
    2) شجرة الحسابات
    ====================================================================== */
+function accNorm(s){
+  return String(s||"").toLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g,"")
+    .replace(/[أإآٱ]/g,"ا").replace(/ى/g,"ي").replace(/ة/g,"ه");
+}
+function accountsPeriodActive(){ return !!(ui.accFrom || ui.accTo); }
+function setAccountsPeriod(kind){
+  const t = todayISO();
+  if(kind==="month"){ ui.accFrom = t.slice(0,8)+"01"; ui.accTo = t; }
+  else if(kind==="year"){ ui.accFrom = t.slice(0,4)+"-01-01"; ui.accTo = t; }
+  else { ui.accFrom = ""; ui.accTo = ""; ui.accActiveOnly = false; }
+  render();
+}
+function updateAccountsBody(){ const el = byId("accounts-body"); if(el) el.innerHTML = renderAccountsBody(); }
 function renderAccounts(){
   ui.accountSortMode = ui.accountSortMode || "code";
   const isCustom = ui.accountSortMode==="custom";
-  const groups = Object.entries(ACCOUNT_TYPES).map(([type,meta]) => ({
-    type, meta,
-    items: DB.accounts.filter(a=>a.type===type).sort((a,b)=> isCustom ? ((Number(a.sortOrder)||0)-(Number(b.sortOrder)||0)) : a.code.localeCompare(b.code)),
-  }));
+  const periodOn = accountsPeriodActive();
   let html = sectionHead("🌳","شجرة الحسابات","تصنيف الحسابات إلى أصول، خصوم، حقوق ملكية، إيرادات ومصروفات",
     '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
       '<button class="btn btn-ghost" onclick="exportAccountsExcel()">📊 تصدير إكسيل</button>' +
@@ -2616,35 +2644,87 @@ function renderAccounts(){
   html += '<input type="file" id="accountsImportInput" accept=".xlsx,.xls" style="display:none;" onchange="importAccountsExcel(event)"/>';
   html += '<div style="font-size:11px; color:var(--stone-500); margin:-6px 0 12px;">💡 عند الاستيراد: ترتيب الأعمدة — الكود، اسم الحساب، التصنيف الرئيسي (أصول/خصوم/حقوق ملكية/إيرادات/مصروفات)، التصنيف الفرعي، طبيعة الرصيد (مدينة/دائنة) — الصف الأول عناوين ويُتجاهل. لو الكود موجود بالفعل سيُحدَّث الحساب، ولو جديد سيُضاف. الحسابات الفرعية التلقائية (المرتبطة بعملاء/موردين/سائقين/مساعدين) غير مشمولة بالتصدير أو الاستيراد لأنها تُدار تلقائيًا من صفحاتها الخاصة. أفضل طريقة لمعرفة الترتيب بالضبط: اضغط "📊 تصدير إكسيل" أولًا ثم عدّل نفس الملف.</div>';
 
+  html += '<div class="form-panel" style="margin-bottom:12px;">' +
+    '<div class="form-grid cols-4">' +
+      '<div style="grid-column:span 2;"><label class="f-label">🔍 بحث بالكود أو اسم الحساب</label><input class="f-input" id="acc-search" value="'+esc(ui.accSearch||"")+'" placeholder="اكتب جزء من الاسم أو الكود" oninput="ui.accSearch=this.value; updateAccountsBody();"/></div>' +
+      '<div><label class="f-label">من تاريخ</label><input class="f-input" type="date" value="'+esc(ui.accFrom||"")+'" onchange="ui.accFrom=this.value; render();"/></div>' +
+      '<div><label class="f-label">إلى تاريخ</label><input class="f-input" type="date" value="'+esc(ui.accTo||"")+'" onchange="ui.accTo=this.value; render();"/></div>' +
+    '</div>' +
+    '<div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px;">' +
+      '<button class="btn btn-ghost" onclick="setAccountsPeriod(\'month\')">هذا الشهر</button>' +
+      '<button class="btn btn-ghost" onclick="setAccountsPeriod(\'year\')">هذه السنة</button>' +
+      (periodOn ? '<button class="btn btn-ghost" onclick="setAccountsPeriod(\'clear\')">✕ مسح الفترة</button>' +
+        '<label style="display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;"><input type="checkbox" '+(ui.accActiveOnly?"checked":"")+' onchange="ui.accActiveOnly=this.checked; render();"/> الحسابات ذات الحركة في الفترة فقط</label>' : '') +
+    '</div>' +
+    (periodOn ? '<div style="font-size:11px; color:var(--stone-500); margin-top:8px;">💡 مع تحديد فترة بتظهر أعمدة: رصيد أول الفترة، حركة الفترة (مدين/دائن)، ورصيد آخر الفترة لكل حساب — محسوبة من قيود اليومية بتواريخها (والرصيد بحسب طبيعة الحساب، والسالب معناه رصيد عكس طبيعته).</div>' : '') +
+  '</div>';
+
   html += '<div style="width:220px; margin-bottom:14px;"><label class="f-label">الترتيب</label><select class="f-input" onchange="ui.accountSortMode=this.value; render();">' +
     '<option value="code" '+(ui.accountSortMode==="code"?"selected":"")+'>حسب الكود (تلقائي)</option>' +
     '<option value="custom" '+(isCustom?"selected":"")+'>ترتيب مخصص (يدوي)</option>' +
   '</select></div>';
 
   if(ui.accountForm) html += renderAccountForm();
-
+  html += '<div id="accounts-body">'+renderAccountsBody()+'</div>';
+  return html;
+}
+function renderAccountsBody(){
+  const isCustom = ui.accountSortMode==="custom";
+  const terms = accNorm((ui.accSearch||"").trim()).split(/\s+/).filter(Boolean);
+  const periodOn = accountsPeriodActive();
+  const activeOnly = periodOn && !!ui.accActiveOnly;
+  const filterActive = terms.length>0 || activeOnly;
+  const showOrder = isCustom && !filterActive;
+  let openMap = null, moveMap = null;
+  if(periodOn){
+    const from = ui.accFrom || "", to = ui.accTo || "";
+    openMap = from ? computeBalances(DB.entries.filter(e=>e.date < from)) : computeBalances([]);
+    moveMap = computeBalances(DB.entries.filter(e=> (!from || e.date>=from) && (!to || e.date<=to)));
+  }
+  const signed = function(a, d, c){ return a.normal==="debit" ? d-c : c-d; };
+  const fmtSigned = function(v){ return v<0 ? '<span style="color:#e11d48;">-'+money(-v)+'</span>' : money(v); };
+  const groups = Object.entries(ACCOUNT_TYPES).map(([type,meta]) => ({
+    type, meta,
+    items: DB.accounts.filter(a=>a.type===type).sort((a,b)=> isCustom ? ((Number(a.sortOrder)||0)-(Number(b.sortOrder)||0)) : a.code.localeCompare(b.code)),
+  }));
+  let html = "", shown = 0;
   groups.forEach(g => {
-    html += '<div class="group-title"><span class="dot dot-'+g.meta.tone+'"></span>' + esc(g.meta.label) + ' <span style="color:var(--stone-400); font-weight:400;">(' + g.items.length + ')</span></div>';
+    const items = g.items.filter(a=>{
+      if(terms.length){ const hay = accNorm(a.code+" "+a.name); if(!terms.every(t=>hay.indexOf(t)!==-1)) return false; }
+      if(activeOnly){ const m = moveMap[a.id]||{debit:0,credit:0}; if(!m.debit && !m.credit) return false; }
+      return true;
+    });
+    if(filterActive && items.length===0) return;
+    shown += items.length;
+    html += '<div class="group-title"><span class="dot dot-'+g.meta.tone+'"></span>' + esc(g.meta.label) + ' <span style="color:var(--stone-400); font-weight:400;">(' + items.length + ')</span></div>';
     const subDefs = SUBTYPES[g.type] || [{id:"", label:""}];
     const showSubHeadings = subDefs.length > 1;
     subDefs.forEach(sd => {
-      const subItems = g.items.filter(a => accSubType(a) === sd.id);
-      if(subItems.length===0 && showSubHeadings) return;
+      const subItems = items.filter(a => accSubType(a) === sd.id);
+      if(subItems.length===0 && (showSubHeadings || filterActive)) return;
       if(showSubHeadings){
         html += '<div style="font-size:11.5px; font-weight:800; color:var(--stone-500); margin:10px 0 6px; padding-right:4px;">— ' + esc(sd.label) + ' —</div>';
       }
-      html += '<div class="table-wrap" style="margin-bottom:10px;"><table><thead><tr>'+(isCustom?'<th style="width:56px;">ترتيب</th>':'')+'<th>الكود</th><th>اسم الحساب</th><th>الطبيعة</th><th class="tleft">إجراءات</th></tr></thead><tbody>';
+      const colCount = 4 + (showOrder?1:0) + (periodOn?4:0);
+      html += '<div class="table-wrap" style="margin-bottom:10px;"><table><thead><tr>'+(showOrder?'<th style="width:56px;">ترتيب</th>':'')+'<th>الكود</th><th>اسم الحساب</th><th>الطبيعة</th>'+(periodOn?'<th class="tleft">رصيد أول الفترة</th><th class="tleft">مدين</th><th class="tleft">دائن</th><th class="tleft">رصيد آخر الفترة</th>':'')+'<th class="tleft">إجراءات</th></tr></thead><tbody>';
       if(subItems.length===0){
-        html += '<tr><td colspan="'+(isCustom?5:4)+'"><div class="empty-row">لا توجد حسابات في هذا التصنيف</div></td></tr>';
+        html += '<tr><td colspan="'+colCount+'"><div class="empty-row">لا توجد حسابات في هذا التصنيف</div></td></tr>';
       }
       subItems.forEach((a,i) => {
         const isPartyAcc = !!(a.partyKind && a.partyId);
         const partyLabel = isPartyAcc ? ((PARTY_ACCOUNT_META[a.partyKind]||{}).prefixLabel||"") : "";
+        let periodCells = "";
+        if(periodOn){
+          const o = openMap[a.id]||{debit:0,credit:0}, m = moveMap[a.id]||{debit:0,credit:0};
+          const open = signed(a, o.debit, o.credit), close = open + signed(a, m.debit, m.credit);
+          periodCells = '<td class="tleft num">'+fmtSigned(open)+'</td><td class="tleft num">'+(m.debit?money(m.debit):"")+'</td><td class="tleft num">'+(m.credit?money(m.credit):"")+'</td><td class="tleft num" style="font-weight:700;">'+fmtSigned(close)+'</td>';
+        }
         html += '<tr>' +
-          (isCustom ? '<td class="tleft"><button class="icon-btn" style="padding:2px 6px;" '+(i===0?"disabled":"")+' onclick="moveAccountOrder(\''+a.id+'\',-1)" title="تحريك لأعلى">▲</button><button class="icon-btn" style="padding:2px 6px;" '+(i===subItems.length-1?"disabled":"")+' onclick="moveAccountOrder(\''+a.id+'\',1)" title="تحريك لأسفل">▼</button></td>' : '') +
+          (showOrder ? '<td class="tleft"><button class="icon-btn" style="padding:2px 6px;" '+(i===0?"disabled":"")+' onclick="moveAccountOrder(\''+a.id+'\',-1)" title="تحريك لأعلى">▲</button><button class="icon-btn" style="padding:2px 6px;" '+(i===subItems.length-1?"disabled":"")+' onclick="moveAccountOrder(\''+a.id+'\',1)" title="تحريك لأسفل">▼</button></td>' : '') +
           '<td class="num" style="color:var(--stone-500);">'+esc(a.code)+'</td>' +
           '<td style="font-weight:600;">'+esc(a.name)+(isPartyAcc?' <span style="font-weight:400; font-size:10.5px; color:var(--stone-400);" title="حساب فرعي تلقائي مرتبط بـ'+esc(partyLabel)+'">🔗 '+esc(partyLabel)+'</span>':'')+'</td>' +
           '<td>'+(a.normal==="debit"?"مدينة":"دائنة")+'</td>' +
+          periodCells +
           '<td class="tleft">' +
             (isPartyAcc ? '<button class="icon-btn" onclick="goToPartyAccountOwner(\''+a.partyKind+'\',\''+a.partyId+'\')" title="فتح كشف حساب الجهة">📊</button>' : '') +
             '<button class="icon-btn" onclick="openAccountForm(\''+a.id+'\')">✏️</button>' +
@@ -2655,6 +2735,10 @@ function renderAccounts(){
       html += '</tbody></table></div>';
     });
   });
+  if(filterActive){
+    const summary = '<div style="font-size:12px; color:var(--stone-500); margin-bottom:8px;">عدد النتائج: <b>'+shown+'</b> من '+DB.accounts.length+' حساب</div>';
+    html = summary + (shown===0 ? '<div class="empty-state">لا توجد حسابات مطابقة للبحث/الفترة.</div>' : html);
+  }
   return html;
 }
 function moveAccountOrder(id, direction){
@@ -4534,10 +4618,16 @@ function renderRegisterForm(){
     '<div class="form-panel">' +
       '<div class="form-grid cols-3">' +
         '<div><label class="f-label">التاريخ</label><input class="f-input" type="date" id="rf-date" value="'+esc(f.date)+'"/></div>' +
-        '<div><label class="f-label">'+(isSales?"العميل":"المورد")+'</label><select class="f-input" id="rf-party" onchange="registerLiveUpdate()">' +
+        '<div><label class="f-label" style="display:flex; justify-content:space-between; align-items:center; gap:6px;"><span>'+(isSales?"العميل":"المورد")+'</span><button type="button" class="btn btn-ghost" style="padding:2px 8px; font-size:11.5px;" onclick="toggleQuickParty()">➕ '+(isSales?"عميل جديد":"مورد جديد")+'</button></label><select class="f-input" id="rf-party" onchange="registerLiveUpdate()">' +
           '<option value="">اختر '+(isSales?"عميل":"مورد")+'</option>' +
           parties.map(p=>'<option value="'+p.id+'" '+(p.id===f[partyField]?"selected":"")+'>'+esc(p.name)+'</option>').join("") +
-        '</select></div>' +
+        '</select>' +
+        '<div id="rf-quick-party" style="display:none; margin-top:8px; padding:10px; border:1px dashed var(--stone-300); border-radius:8px; background:#fff;">' +
+          '<input class="f-input" id="rf-np-name" placeholder="اسم '+(isSales?"العميل":"المورد")+' الجديد" style="margin-bottom:6px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault(); quickAddPartyFromRegister();}"/>' +
+          '<input class="f-input" id="rf-np-phone" placeholder="رقم الهاتف (اختياري)" style="margin-bottom:6px;" onkeydown="if(event.key===\'Enter\'){event.preventDefault(); quickAddPartyFromRegister();}"/>' +
+          '<div style="display:flex; gap:6px;"><button type="button" class="btn" style="background:var(--brand-orange); color:#fff;" onclick="quickAddPartyFromRegister()">✔ إضافة واختياره</button><button type="button" class="btn btn-ghost" onclick="toggleQuickParty()">إلغاء</button></div>' +
+          '<div style="font-size:11px; color:var(--stone-500); margin-top:6px;">الرصيد الافتتاحي والعنوان وباقي البيانات تقدر تضيفها بعدين من صفحة '+(isSales?"العملاء":"الموردين")+'.</div>' +
+        '</div></div>' +
         '<div><label class="f-label">نوع العملية</label><select class="f-input" id="rf-optype" onchange="registerLiveUpdate()">' +
           '<option value="" '+(!f.operationType?"selected":"")+'>غير محدد</option>' +
           '<option value="transport" '+(f.operationType==="transport"?"selected":"")+'>نقل</option>' +
@@ -4615,8 +4705,47 @@ function renderRegisterForm(){
         '<button class="btn btn-primary" id="rf-save-btn" onclick="saveRegisterForm()">✔ حفظ وإنشاء القيد</button>' +
         '<button class="btn btn-ghost" onclick="ui.registerForm=null; render();">✕ إلغاء</button>' +
       '</div>' +
+      '<button type="button" class="fab-save" id="rf-fab-save" onclick="saveRegisterForm()" title="حفظ (Ctrl+Enter)">✔ حفظ</button>' +
     '</div>'
   );
+}
+/* إضافة عميل/مورد جديد من داخل نموذج المبيعات/المشتريات بدون مغادرة الصفحة أو فقد البيانات المكتوبة */
+function toggleQuickParty(){
+  const box = byId("rf-quick-party"); if(!box) return;
+  const show = box.style.display==="none";
+  box.style.display = show ? "block" : "none";
+  if(show){ const n = byId("rf-np-name"); if(n) n.focus(); }
+}
+function quickAddPartyFromRegister(){
+  if(!canEditTab(ui.tab)){ alert("⛔ ليس لديك صلاحية التعديل في هذا القسم."); return; }
+  const f = ui.registerForm; if(!f) return;
+  const isSales = f.kind==="sales";
+  const kind = isSales ? "customers" : "suppliers";
+  const partyField = isSales ? "customerId" : "supplierId";
+  const name = byId("rf-np-name").value.trim();
+  const phone = byId("rf-np-phone").value.trim();
+  if(!name){ alert("الرجاء إدخال الاسم"); return; }
+  const sel = byId("rf-party");
+  const dup = DB[kind].find(p=>accNorm(p.name)===accNorm(name));
+  if(dup){
+    if(!confirm("يوجد "+(isSales?"عميل":"مورد")+" بنفس الاسم ("+dup.name+").\nموافق = إضافة جديد بنفس الاسم، إلغاء = اختيار الموجود.")){
+      sel.value = dup.id; f[partyField] = dup.id;
+      byId("rf-quick-party").style.display = "none";
+      registerLiveUpdate(); return;
+    }
+  }
+  const party = {id:uid(isSales?"c":"s"), name, phone, address:"", bankName:"", bankAccountNumber:"", openingBalance:"", openingBalanceDate:todayISO(), linkedPartyId:null};
+  if(isSales) party.creditLimit = "";
+  DB[kind].push(party);
+  logActivity("إضافة "+(isSales?"عميل":"مورد"), name);
+  ensurePartyAccount(kind, party);
+  saveDB();
+  const opt = document.createElement("option");
+  opt.value = party.id; opt.textContent = party.name;
+  sel.appendChild(opt); sel.value = party.id; f[partyField] = party.id;
+  byId("rf-np-name").value = ""; byId("rf-np-phone").value = "";
+  byId("rf-quick-party").style.display = "none";
+  registerLiveUpdate();
 }
 /* فلترة قائمة "الربط الدقيق بعمليات الشراء" أثناء الكتابة — فلترة داخل
    المتصفح مباشرة (بدون إعادة رسم الصفحة كلها) عشان تفضل سريعة وسلسة
@@ -9606,6 +9735,7 @@ function renderBackup(){
       const barColor = info.percent>=90 ? "#e11d48" : info.percent>=70 ? "#d97706" : "#059669";
       return '<div style="margin-bottom:14px;">' +
         '<div style="font-size:12.5px; color:var(--stone-500); margin-bottom:4px;">مساحة التخزين المستخدمة: <b>'+info.mb.toFixed(2)+' ميجابايت</b> من حوالي <b>5 ميجابايت</b> (الحد الشائع لكل تطبيق في المتصفح) — '+info.percent+'%</div>' +
+        (info.attachCount ? '<div style="font-size:12px; color:var(--stone-500); margin-bottom:4px;">📎 منها المرفقات: <b>'+info.attachMb.toFixed(2)+' ميجابايت</b> ('+info.attachCount+' مرفق)'+(info.attachMb>=1 ? ' — المرفقات هي أكبر مستهلك للمساحة، يُفضَّل حذف الأقدم أو الأكبر.' : '')+'</div>' : '') +
         '<div style="background:var(--stone-200); border-radius:6px; height:8px; overflow:hidden;"><div style="width:'+info.percent+'%; background:'+barColor+'; height:100%;"></div></div>' +
       '</div>';
     })() +
@@ -10191,12 +10321,38 @@ function importBackup(event){
 function handleEntryAttachment(event){
   const file = event.target.files && event.target.files[0];
   if(!file) return;
-  if(file.size > 1.5*1024*1024){ alert("حجم الملف كبير جدًا (الحد الأقصى 1.5 ميجابايت تقريبًا) — الرجاء ضغط الصورة أولاً."); event.target.value=""; return; }
+  const isImage = /^image\//.test(file.type);
+  if(!isImage && file.size > 1024*1024){ alert("حجم الملف كبير جدًا (الحد الأقصى 1 ميجابايت للملفات غير الصور) — الرجاء ضغطه أولاً."); event.target.value=""; return; }
+  if(isImage && file.size > 15*1024*1024){ alert("الصورة كبيرة جدًا — الرجاء اختيار صورة أصغر."); event.target.value=""; return; }
   syncEntryFormFromDOM();
   const reader = new FileReader();
   reader.onload = function(){
-    ui.entryForm.attachment = { name: file.name, dataUrl: reader.result };
-    render();
+    const original = reader.result;
+    function done(dataUrl, name){
+      /* حد أمان بعد الضغط: نمنع أي مرفق يزيد عن حوالي 700 كيلوبايت لأن المرفقات بتتخزن جوه نفس مساحة البيانات */
+      if(dataUrl.length > 700*1024){ alert("المرفق لسه كبير بعد الضغط ("+Math.round(dataUrl.length/1024)+" كيلوبايت). الرجاء اختيار صورة أبسط أو أصغر."); return; }
+      ui.entryForm.attachment = { name: name, dataUrl: dataUrl };
+      render();
+    }
+    if(!isImage){ done(original, file.name); return; }
+    /* ضغط الصور: تصغير لأقصى 1280px وتحويل JPEG بجودة 0.72 (الصور بتقل غالبًا من ميجابايتات لمئات الكيلوبايت) */
+    const img = new Image();
+    img.onload = function(){
+      try{
+        const maxSide = 1280;
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width*scale)), h = Math.max(1, Math.round(img.height*scale));
+        const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff"; ctx.fillRect(0,0,w,h);
+        ctx.drawImage(img, 0, 0, w, h);
+        const compressed = canvas.toDataURL("image/jpeg", 0.72);
+        const useCompressed = compressed.length < original.length;
+        done(useCompressed ? compressed : original, useCompressed ? file.name.replace(/\.[^.]+$/,"")+".jpg" : file.name);
+      }catch(err){ done(original, file.name); }
+    };
+    img.onerror = function(){ done(original, file.name); };
+    img.src = original;
   };
   reader.readAsDataURL(file);
 }
